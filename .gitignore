@@ -1,0 +1,31 @@
+# s&box generated files
+.sbox/
+.vs/
+.bin/
+.obj/
+bin/
+obj/
+*.csproj
+*.sln
+*.slnx
+*.user
+*.suo
+**/Properties/launchSettings.json
+Assets/**/*_c
+Assets/**/*_d
+
+# Machine-specific editor settings
+.vscode/
+.idea/
+
+# Local configuration and secrets
+.sbox-engine
+.env
+.env.*
+!.env.example
+
+# Logs, crash dumps, and OS files
+*.log
+*.dmp
+.DS_Store
+Thumbs.db

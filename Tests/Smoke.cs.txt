@@ -1,0 +1,17 @@
+var scene=Game.ActiveScene;
+var checks=new System.Collections.Generic.List<string>();
+void Check(bool value,string message) {if(!value)throw new Exception("FAIL: "+message);checks.Add(message);}
+var players=scene.GetAllComponents<PlayerController>().ToArray();
+Check(players.Length==1,"one movable character");
+var player=players[0];
+Check(player.ThirdPerson && player.UseInputControls,"third-person keyboard controls enabled");
+Check(player.Renderer.IsValid() && player.Renderer.Model!=null,"visible character model");
+Check(scene.GetAllComponents<CameraComponent>().Any(c=>c.IsMainCamera),"main camera exists");
+var trace=scene.Trace.Ray(new Vector3(500,500,200),new Vector3(500,500,-200)).Run();
+Check(trace.Hit && trace.Normal.z>0.99f,"flat terrain has ground collision");
+Check(player.WorldPosition.z>-5 && player.WorldPosition.z<10,"character rests on terrain");
+Check(!scene.GetAllComponents<ScreenPanel>().Any(),"no arcade HUD");
+Check(!scene.GetAllObjects(true).Any(o=>o.Name.Contains("Orb") || o.Name.Contains("Sentinel") || o.Name=="Information"),"no arcade or sample decorations");
+Check(Mouse.Visibility == MouseVisibility.Hidden,"mouse captured during gameplay");
+Check(player.UseLookControls,"mouse look enabled during gameplay");
+return new {Passed=checks.Count,Checks=checks,Player=player.WorldPosition};

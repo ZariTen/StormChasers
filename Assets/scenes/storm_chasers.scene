@@ -459,7 +459,7 @@
           ],
           "Children": [
             {
-              "__guid": "f8947381-652e-48c2-b947-2cafb80527f1",
+              "__guid": "32092c86-b149-4eec-8c2b-e7f6dac4ef8c",
               "__version": 2,
               "Flags": 0,
               "Name": "Clothing - y_front_pants_white",
@@ -476,7 +476,7 @@
               "Components": [
                 {
                   "__type": "Sandbox.SkinnedModelRenderer",
-                  "__guid": "21b52996-4977-4455-ac26-29250956df10",
+                  "__guid": "8334c991-2917-4564-a5e3-b07e6282f6c4",
                   "__enabled": true,
                   "Flags": 0,
                   "Animation": {
@@ -681,6 +681,56 @@
           "Static": true,
           "Surface": null,
           "SurfaceVelocity": "0,0,0"
+        }
+      ],
+      "Children": []
+    },
+    {
+      "__guid": "be60ebd8-ebe1-495e-806c-a6e5372271e5",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Spawn Menu",
+      "Position": "0,0,0",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "",
+      "Enabled": true,
+      "NetworkMode": 2,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Sandbox.ScreenPanel",
+          "__guid": "63a53007-95a0-4b5e-ba6a-cf5a3d2a1246",
+          "__enabled": true,
+          "Flags": 0,
+          "AutoScreenScale": true,
+          "OnComponentDestroy": null,
+          "OnComponentDisabled": null,
+          "OnComponentEnabled": null,
+          "OnComponentFixedUpdate": null,
+          "OnComponentStart": null,
+          "OnComponentUpdate": null,
+          "Opacity": 1,
+          "Scale": 1,
+          "ScaleStrategy": "ConsistentHeight",
+          "TargetCamera": null,
+          "Timing": "AfterPostProcess",
+          "ZIndex": 100
+        },
+        {
+          "__type": "SandboxMenuBridge",
+          "__guid": "9cc4cc01-f3da-4269-90fc-f1c6f56b6475",
+          "__enabled": true,
+          "Flags": 0,
+          "OnComponentDestroy": null,
+          "OnComponentDisabled": null,
+          "OnComponentEnabled": null,
+          "OnComponentFixedUpdate": null,
+          "OnComponentStart": null,
+          "OnComponentUpdate": null
         }
       ],
       "Children": []

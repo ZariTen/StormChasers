@@ -14,7 +14,11 @@ Install s&box through Steam, then open `storm_chasers.sbproj` in the editor and 
 | Mouse | Look around |
 | Shift | Run |
 | Space | Jump |
-| Esc | Open the native pause menu and release the cursor |
+| Hold Q | Open Facepunch’s Sandbox spawn menu |
+| C | Open the Sandbox inspect menu |
+| Esc | Open the native pause menu |
+
+The spawn menu loads the official Facepunch Sandbox package when Play starts. The first load can take a moment. Not every Sandbox entity or tool has been tested with the Storm Chasers character.
 
 Closing the pause menu resumes gameplay and captures the mouse again.
 

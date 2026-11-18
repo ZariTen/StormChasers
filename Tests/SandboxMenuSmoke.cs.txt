@@ -1,0 +1,17 @@
+var scene = Game.ActiveScene;
+var hostType = TypeLibrary.GetType("Sandbox.SpawnMenuHost")?.TargetType;
+var host = hostType is null ? null : scene.GetAllObjects(true).Select(o => o.Components.Get(hostType)).OfType<PanelComponent>().SingleOrDefault();
+if (host?.Panel is null) throw new Exception("Facepunch's spawn menu is not mounted");
+var player = scene.GetAllComponents<PlayerController>().Single();
+if (player.GameObject.Name != "Character") throw new Exception("Original character was replaced");
+if (Input.GetButtonOrigin("spawnmenu") != "Q") throw new Exception("Q is not bound to the stock spawn action");
+var manager = hostType.Assembly.GetTypes().Single(t => t.Name == "GameManager");
+var ids = scene.GetAllObjects(true).Select(o => o.Id).ToHashSet();
+manager.GetMethod("Spawn", new[] { typeof(string), typeof(string), typeof(bool) }).Invoke(null, new object[] { "prop:facepunch.wooden_crate", null, true });
+for (int i = 0; i < 30; ++i)
+{
+    await Task.Delay(100);
+    if (scene.GetAllObjects(true).Any(o => !ids.Contains(o.Id) && o.GetComponent<Prop>()?.Model?.ResourcePath.Contains("wooden_crate") == true))
+        return new { Passed = true, MenuType = hostType.FullName };
+}
+throw new Exception("Stock spawn pipeline did not create the crate");

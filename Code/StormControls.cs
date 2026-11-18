@@ -3,26 +3,26 @@ public sealed class StormControls : Component
 {
     readonly Game.Overlay overlay = new();
     public bool MenuOpen => overlay.IsPauseMenuOpen;
-    public bool MouseLookActive => !overlay.IsOpen;
+    public bool MouseLookActive => !overlay.IsOpen && !(Scene.Get<SandboxMenuBridge>()?.IsOpen ?? false);
 
     protected override void OnStart() => ApplyMode();
 
     void ApplyMode()
     {
-        var overlayOpen = overlay.IsOpen;
+        var playing = MouseLookActive;
         var controller = Components.Get<PlayerController>();
         if (controller.IsValid())
         {
-            controller.UseLookControls = !overlayOpen;
-            controller.UseInputControls = !overlayOpen;
-            if (overlayOpen) controller.WishVelocity = Vector3.Zero;
+            controller.UseLookControls = playing;
+            controller.UseInputControls = playing;
+            if (!playing) controller.WishVelocity = Vector3.Zero;
         }
-        Mouse.Visibility = overlayOpen ? MouseVisibility.Visible : MouseVisibility.Hidden;
+        Mouse.Visibility = playing ? MouseVisibility.Hidden : MouseVisibility.Visible;
     }
 
     protected override void OnUpdate()
     {
-        if (Input.EscapePressed)
+        if (Input.EscapePressed && Scene.Get<SandboxMenuBridge>()?.IsOpen != true)
         {
             Input.EscapePressed = false;
             if (!overlay.IsOpen) Game.Overlay.ShowPauseMenu();

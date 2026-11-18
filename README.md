@@ -1,6 +1,6 @@
 # Storm Chasers
 
-An early s&box prototype with flat terrain, a third-person character, and the native pause menu.
+An early s&box prototype with flat terrain, first-person controls, and the native pause menu.
 
 ## Getting started
 

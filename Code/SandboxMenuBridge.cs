@@ -28,11 +28,39 @@ public sealed class SandboxMenuBridge : Component
                 character.Components.Create(TypeLibrary.GetType(playerType));
             RemoveDuplicateLocalPlayer();
             host = (PanelComponent)Components.Create(menuType);
+            EquipStartingPhysgun();
         }
         catch (Exception e)
         {
             if (this.IsValid()) Log.Warning($"Sandbox spawn menu failed: {e.Message}");
         }
+    }
+
+    void EquipStartingPhysgun()
+    {
+        if (!Networking.IsHost) return;
+        var inventoryType = TypeLibrary.GetType("PlayerInventory");
+        if (inventoryType is null)
+        {
+            Log.Warning("Sandbox inventory is unavailable; cannot equip the starting physgun.");
+            return;
+        }
+
+        const string path = "weapons/physgun/physgun.prefab";
+        var prefab = GameObject.GetPrefab(path);
+        var template = prefab?.GetComponent<BaseInventoryItem>(true);
+        if (!template.IsValid())
+        {
+            Log.Warning("Sandbox physgun prefab is unavailable.");
+            return;
+        }
+
+        var inventory = character.Components.Get(inventoryType.TargetType) as BaseInventoryComponent
+            ?? (BaseInventoryComponent)character.Components.Create(inventoryType);
+        var physgun = inventory.Items.FirstOrDefault(item => item.GetType() == template.GetType())
+            ?? inventory.Pickup(prefab, -1);
+        if (physgun.IsValid()) inventory.Switch(physgun, false);
+        else Log.Warning("Sandbox inventory refused the starting physgun.");
     }
 
     protected override void OnUpdate() => RemoveDuplicateLocalPlayer();

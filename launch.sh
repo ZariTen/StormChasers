@@ -29,4 +29,14 @@ if ! command -v steam-run >/dev/null 2>&1; then
 fi
 
 cd -- "$engine"
-exec steam-run ./sbox-dev -project "$project/storm_chasers.sbproj" "$@"
+# Match Qt's X11 viewport and enable SDL events on the embedded window.
+# https://github.com/Facepunch/sbox-public/issues/12204
+editor_env=(QT_QPA_PLATFORM=xcb SDL_VIDEO_DRIVER=x11 SDL_VIDEO_X11_EXTERNAL_WINDOW_INPUT=1)
+
+# Prevent the bundled HarfBuzz from binding to incompatible system symbols.
+# https://github.com/Facepunch/sbox-public/issues/11770
+harfbuzz="$PWD/bin/linuxsteamrt64/libHarfBuzzSharp.so"
+if [[ -r "$harfbuzz" ]]; then
+  editor_env+=("LD_PRELOAD=$harfbuzz${LD_PRELOAD:+:$LD_PRELOAD}")
+fi
+exec steam-run env "${editor_env[@]}" ./sbox-dev -project "$project/storm_chasers.sbproj" "$@"

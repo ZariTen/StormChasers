@@ -24,7 +24,7 @@ The first tornado appears a few seconds after Play starts. The spawner alternate
 
 ### NixOS
 
-Run `./launch.sh` from the project directory. The launcher starts the editor through `steam-run` without overriding Qt or SDL settings.
+Run `./launch.sh` from the project directory. The launcher uses `steam-run`, preloads the bundled HarfBuzz library when present to avoid a [Linux editor startup crash](https://github.com/Facepunch/sbox-public/issues/11770), and enables [input events in the embedded X11 viewport](https://github.com/Facepunch/sbox-public/issues/12204). This does not fix intermittent mouse capture.
 
 For a non-default Steam library, set `FACEPUNCH_ENGINE` to the s&box installation directory, or save that directory as a single line in `.sbox-engine`. This local file is ignored by Git. Standard Steam installation locations are detected automatically.
 

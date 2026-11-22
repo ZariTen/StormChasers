@@ -7,7 +7,9 @@
   "IncludeSourceFiles": false,
   "Resources": null,
   "PublishUsedAssetsOnly": true,
-  "PackageReferences": [],
+  "PackageReferences": [
+    "facepunch.sandbox#446139"
+  ],
   "EditorReferences": null,
   "Mounts": null,
   "IsStandaloneOnly": false,
@@ -18,13 +20,14 @@
     "MaxPlayers": 1,
     "MinPlayers": 1,
     "TickRate": 50,
-    "GameNetworkType": "Singleplayer",
+    "GameNetworkType": "Multiplayer",
     "MapSelect": "Unrestricted",
     "MapList": [],
     "RankType": "None",
     "PerMapRanking": false,
     "LeaderboardType": "None",
     "CsProjName": "",
-    "StartupScene": "scenes/storm_chasers.scene"
+    "StartupScene": "scenes/storm_chasers.scene",
+    "SystemScene": "scenes/system.scene"
   }
 }

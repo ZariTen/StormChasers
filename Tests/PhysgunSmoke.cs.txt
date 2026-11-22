@@ -1,9 +1,0 @@
-var player = Game.ActiveScene.GetAllComponents<PlayerController>().Single();
-var inventory = player.GetComponent<BaseInventoryComponent>();
-var item = inventory?.ActiveItem;
-if (item is null || item.GetType().Name != "PhysGun" && item.GetType().Name != "Physgun")
-    throw new Exception("The player did not start with the Sandbox physgun equipped");
-if (!item.IsActive || inventory.Items.Count(x => x.GetType() == item.GetType()) != 1)
-    throw new Exception("Expected exactly one active physgun");
-if (player.ThirdPerson) throw new Exception("The game must stay first-person");
-return new { Equipped = item.GetType().Name, item.Slot };

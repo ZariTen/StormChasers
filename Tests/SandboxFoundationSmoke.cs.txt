@@ -1,0 +1,40 @@
+var scene = Game.ActiveScene;
+var controllers = scene.GetAllComponents<PlayerController>().Where(x => x.Network.Owner == Connection.Local).ToArray();
+if (controllers.Length != 1) throw new Exception($"Expected one local Sandbox character, found {controllers.Length}.");
+var controller = controllers.Single();
+var playerType = TypeLibrary.GetType("Player")?.TargetType;
+var player = playerType is null ? null : controller.GameObject.Components.Get(playerType);
+var playerData = playerType?.GetProperty("PlayerData")?.GetValue(player) as Component;
+if (!playerData.IsValid() || playerData.Network.Owner != Connection.Local)
+    throw new Exception("The local character did not go through Sandbox's player spawn lifecycle (missing owned PlayerData).");
+var inventory = controller.GameObject.GetComponent<BaseInventoryComponent>();
+var physguns = inventory?.Items.Where(x => x.GetType().Name.Equals("PhysGun", StringComparison.OrdinalIgnoreCase)).ToArray();
+if (physguns?.Length != 1) throw new Exception("Expected exactly one Sandbox physgun in the stock inventory.");
+var physgun = physguns.Single();
+if (!physgun.IsActive) throw new Exception("The stock physgun is not equipped on a fresh spawn.");
+var view = physgun.GetType().GetProperty("ViewModel")?.GetValue(physgun) as GameObject;
+if (!view.IsValid() || !view.Enabled || scene.Camera is null || (view.WorldPosition - scene.Camera.WorldPosition).Length > 8)
+    throw new Exception("The equipped physgun has no first-person view model at the camera.");
+var menuType = TypeLibrary.GetType("Sandbox.SpawnMenuHost")?.TargetType;
+var menu = menuType is null ? null : scene.GetAllObjects(true).Select(x => x.Components.Get(menuType)).OfType<PanelComponent>().SingleOrDefault();
+if (menu?.Panel is null || Input.GetButtonOrigin("spawnmenu") != "Q")
+    throw new Exception("The native Q spawn menu is not ready.");
+var hits = scene.Trace.Ray(controller.WorldPosition + Vector3.Up * 32, controller.WorldPosition + Vector3.Down * 128).IgnoreGameObjectHierarchy(controller.GameObject).Run();
+if (!hits.Hit || hits.GameObject?.Name != "Flat Terrain") throw new Exception($"Sandbox player did not spawn on the Storm Chasers terrain: {hits.GameObject?.Name}.");
+var manager = menuType.Assembly.GetTypes().Single(x => x.Name == "GameManager");
+var spawn = manager.GetMethod("Spawn", new[] { typeof(string), typeof(string), typeof(bool) });
+async Task<GameObject> SpawnAndFind(string ident, Func<GameObject, bool> matches)
+{
+    var before = scene.GetAllObjects(true).Select(x => x.Id).ToHashSet();
+    spawn.Invoke(null, new object[] { ident, null, true });
+    for (var i = 0; i < 80; i++)
+    {
+        await Task.Delay(100);
+        var result = scene.GetAllObjects(true).FirstOrDefault(x => !before.Contains(x.Id) && matches(x));
+        if (result.IsValid()) return result;
+    }
+    throw new Exception($"The Sandbox spawn pipeline did not spawn {ident}.");
+}
+var crate = await SpawnAndFind("prop:facepunch.wooden_crate", x => x.GetComponent<Prop>()?.Model?.ResourcePath.Contains("wooden_crate") == true);
+var health = await SpawnAndFind("entity:entities/pickup/pickup_health.sent", x => x.Components.GetAll<Component>().Any(c => c.GetType().Name == "HealthPickup"));
+return new { Passed = true, StockPlayer = player.GetType().FullName, StockInventory = inventory.GetType().FullName, PhysgunCount = physguns.Length, ViewModel = view.Name, Menu = menu.GetType().FullName, Crate = crate.Name, ScriptedEntity = health.Name };

@@ -1,0 +1,29 @@
+var scene = Game.ActiveScene;
+GameObject[] Funnels() => scene.GetAllObjects(true).Where(x => x.Name == "Tornado" && x.Tags.Has("storm_tornado")).ToArray();
+var initial = Funnels();
+for (var i = 0; initial.Length == 0 && i < 60; i++)
+{
+    await Task.Delay(100);
+    initial = Funnels();
+}
+if (initial.Length != 1) throw new Exception($"Expected one tornado to spawn on the map, found {initial.Length}.");
+var tornado = initial.Single();
+var start = tornado.WorldPosition;
+var firstPuff = tornado.Children.FirstOrDefault();
+if (!firstPuff.IsValid() || tornado.Children.Count(x => x.GetComponent<ModelRenderer>()?.Model is { IsError: false }) < 10)
+    throw new Exception("Tornado has no visible funnel geometry.");
+var firstPuffStart = firstPuff.LocalPosition;
+await Task.Delay(750);
+if ((tornado.WorldPosition - start).Length < 2 || (firstPuff.LocalPosition - firstPuffStart).Length < 2)
+    throw new Exception("Tornado did not move and rotate.");
+var trace = scene.Trace.Ray(tornado.WorldPosition + Vector3.Up * 64, tornado.WorldPosition + Vector3.Down * 128).Run();
+if (!trace.Hit || trace.GameObject?.Name != "Flat Terrain") throw new Exception("Tornado drifted away from the map surface.");
+for (var i = 0; i < 330 && Funnels().All(x => x.Id == tornado.Id); i++)
+{
+    await Task.Delay(100);
+    if (Funnels().Length > 1) throw new Exception("More than one tornado was spawned.");
+}
+var next = Funnels();
+if (tornado.IsValid() || next.Length != 1 || next[0].Id == tornado.Id)
+    throw new Exception("The old tornado was not replaced by a fresh one.");
+return new { Passed = true, Old = tornado.Id, New = next[0].Id, Ground = trace.GameObject.Name };

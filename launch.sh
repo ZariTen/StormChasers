@@ -29,10 +29,4 @@ if ! command -v steam-run >/dev/null 2>&1; then
 fi
 
 cd -- "$engine"
-engine="$PWD"
-exec steam-run env \
-  LD_PRELOAD="$engine/bin/linuxsteamrt64/libHarfBuzzSharp.so" \
-  QT_QPA_PLATFORM=xcb \
-  SDL_VIDEO_DRIVER=x11 \
-  SDL_VIDEO_X11_EXTERNAL_WINDOW_INPUT=1 \
-  ./sbox-dev -project "$project/storm_chasers.sbproj" "$@"
+exec steam-run ./sbox-dev -project "$project/storm_chasers.sbproj" "$@"

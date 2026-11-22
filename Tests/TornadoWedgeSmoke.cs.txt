@@ -1,0 +1,39 @@
+var scene=Game.ActiveScene;
+var test=scene.CreateObject(false);
+const string tag="wedge_smoke_probe";
+test.Name="F5 geometry verification";
+test.NetworkMode=NetworkMode.Never;
+test.Tags.Add(tag);
+test.WorldPosition=new Vector3(-5000,4900,0);
+var camera=scene.Camera;
+if(camera.IsValid()) camera.RenderExcludeTags.Add(tag);
+try
+{
+    var funnel=test.Components.Create<StormTornadoFunnel>();
+    funnel.Rating=5;
+    test.Enabled=true;
+    await Task.Delay(500);
+    var renderers=test.Children.Single(o=>o.Name=="Condensation Funnel").Children.Select(o=>o.GetComponent<SpriteRenderer>()).ToArray();
+    var low=renderers.Where(r=>r.LocalPosition.z>=120 && r.LocalPosition.z<=1200).ToArray();
+    if(low.Length<22) throw new Exception("Expected a dense wall near the ground.");
+    float Distance(SpriteRenderer r)=>r.LocalPosition.WithZ(0).Length;
+    var clearance=low.Min(r=>Distance(r)-r.Size.x*.4f);
+    if(clearance<380 || low.Average(Distance)<1050 || low.Count(r=>Distance(r)>900)<low.Length*.9f)
+        throw new Exception($"F5 needs a walk-in hollow core and a much broader wall, got {clearance:F0} units clear.");
+    var sectors=low.Select(r=>MathF.Atan2(r.LocalPosition.y,r.LocalPosition.x)).Select(a=>(int)((a+MathF.PI)/MathF.Tau*8)).Distinct().Count();
+    if(sectors<8 || renderers.Any(r=>r.GameObject.GetComponent<Collider>().IsValid()))
+        throw new Exception("The wall should surround the hollow eye, with no blocking collision.");
+    var crown=test.Children.SingleOrDefault(o=>o.Name=="Eye Crown")?.GetComponent<SpriteRenderer>();
+    if (crown is not { Billboard:SpriteRenderer.BillboardMode.None, Texture.IsValid:true } || crown.LocalPosition.z<4900)
+        throw new Exception("The F5 needs a separate rotating cloud crown around the overhead opening.");
+    var weather=scene.GetAllComponents<StormWeather>().Single();
+    var deck=weather.GameObject.Children.Single(o=>o.Name=="Overcast Deck").Children.Select(o=>o.GetComponent<SpriteRenderer>()).ToArray();
+    if(deck.Count(r=>r.Size.x>=40000 && r.Size.y>=30000)<2 || deck.Max(r=>r.WorldPosition.z)-deck.Min(r=>r.WorldPosition.z)<1200)
+        throw new Exception("Persistent cloud strata should extend far beyond the tornado and have distinct heights.");
+    return new{Passed=true,Clearance=clearance,AverageWallRadius=low.Average(Distance),Sectors=sectors,DeckSpan=deck.Max(r=>r.Size.x)};
+}
+finally
+{
+    test.Destroy();
+    if(camera.IsValid()) camera.RenderExcludeTags.Remove(tag);
+}

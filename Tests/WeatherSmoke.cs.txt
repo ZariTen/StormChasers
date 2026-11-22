@@ -1,0 +1,80 @@
+var scene = Game.ActiveScene;
+var weather = scene.GetAllObjects(true).SingleOrDefault(o => o.Name == "Map Weather")?.GetComponent<StormWeather>();
+if (!weather.IsValid()) throw new Exception("Expected a persistent weather controller.");
+var root = weather.GameObject;
+var far = new Vector3(-6000,5800,77);
+var corners = new[]{far, new Vector3(6000,5800,77), new Vector3(-6000,-5800,77), new Vector3(6000,-5800,77)};
+if (weather.PrecipitationAt(far)<.55f) throw new Exception("Background rain should reach the far corner even outside the tornado cell.");
+var fog = root.Children.Single(o=>o.Name=="Map Rain Fog").GetComponent<Fog>();
+if (fog is not { FogEnabled:true, DistanceEnabled:true, MaximumOpacity:>=.15f }) throw new Exception("Map-wide rain needs background fog.");
+SpriteRenderer[] Sprites(string name) => root.Children.Single(o=>o.Name==name).Children
+    .Select(o=>o.Components.GetAll<SpriteRenderer>(FindMode.EverythingInSelf).Single()).ToArray();
+var deck = Sprites("Overcast Deck");
+if (deck.Length < 2 || deck.Any(r=>r.Billboard != SpriteRenderer.BillboardMode.None || r.Size.x<18000
+    || r.Opaque || !r.Texture.IsValid() || MathF.Abs(Vector3.Dot(r.WorldRotation.Forward,Vector3.Up))<.97f))
+    throw new Exception("Expected continuous world-aligned cloud layers, not a grid of smoke billboards.");
+var front = Sprites("Storm Shelf");
+var drops = Sprites("Nearby Rain");
+var haze = root.Children.Single(o=>o.Name=="Rain Haze").Children
+    .Select(o=>o.Components.GetAll<VolumetricFogVolume>(FindMode.EverythingInSelf).Single()).ToArray();
+if (front.Length<2 || front.Any(r=>r.Billboard!=SpriteRenderer.BillboardMode.None || r.Size.x<4500)
+    || drops.Length<300 || haze.Length<2 || haze.Any(v=>!v.IsValid()) || root.Children.Any(o=>o.Name=="Rain Shafts"))
+    throw new Exception("Expected a broad storm shelf, fine raindrops and a volume-based distant veil, not striped cards.");
+async Task Wait(Func<bool> ready, string message)
+{
+    for(var i=0;i<260;i++)
+    {
+        if (ready()) return;
+        await Task.Delay(100);
+    }
+    throw new Exception(message);
+}
+GameObject Storm() => scene.GetAllObjects(true).FirstOrDefault(o=>o.Name=="Tornado" && o.Tags.Has("storm_tornado"));
+await Wait(()=>Storm().IsValid() && weather.StormStrength>.87f,"Rain cell did not intensify.");
+var center=weather.StormCenter;
+var distantRain = corners.Min(weather.PrecipitationAt);
+var eyeRadius = Storm().GetComponent<StormTornadoFunnel>().OpenCoreRadius;
+var open=(center + Vector3.Forward * (eyeRadius>0 ? eyeRadius+480 : 0)).WithZ(76);
+var peakRain = weather.PrecipitationAt(open);
+var peakHaze = haze.Max(v=>v.Strength);
+var peakFog = fog.MaximumOpacity;
+if (distantRain<1.50f || peakRain<=distantRain+.25f || peakFog<.37f)
+    throw new Exception($"An active storm must strengthen rain at all four corners and thicken map-wide fog: rain {distantRain:F2}, fog {peakFog:F2}.");
+if ((center-Storm().WorldPosition).Length>30 || peakHaze<.55f
+    || front.All(r=>r.Color.a<.2f) || front.Any(r=>r.WorldPosition.z<2900 || r.WorldPosition.z>6500))
+    throw new Exception("The strongest haze and the low shelf must follow the tornado.");
+if (front.Count(r=>r.Size.x>=24000 && r.Size.y>=18000 && r.Color.a>.35f)<2)
+    throw new Exception("Two active cloud bands must extend across the map beyond the low shelf.");
+if (deck[0].Color.g>.22f || front[0].Color.g>.20f || front[0].Color.g>=front[2].Color.g)
+    throw new Exception("Active clouds need dark undersides and lighter upper layers for contrast.");
+if (deck.Any(r=>r.Size.y<50000) || front.Skip(1).Any(r=>r.Size.y<30000))
+    throw new Exception("Thick cloud bands should cover the horizon in every direction.");
+if (eyeRadius>0 && weather.PrecipitationAt(center)>=distantRain*.5f)
+    throw new Exception("Keep the F5 eye sheltered from the stronger map-wide rain.");
+
+var sheltered=new Vector3(-1100,518,70);
+if (!weather.IsSheltered(sheltered) || weather.IsSheltered(new Vector3(-1449,414,70)))
+    throw new Exception("Rain shelter should use real roof collision.");
+var rain = typeof(StormWeather).GetMethod("UpdateDrops",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance);
+// Sample production streak geometry without moving the actual player camera.
+rain.Invoke(weather,new object[]{far,distantRain,1.75f});
+var distantStreaks = drops.Count(r=>r.Enabled && r.Color.a>.045f);
+rain.Invoke(weather,new object[]{open,peakRain,1.75f});
+var visible = drops.Where(r=>r.Enabled && r.Color.a>.035f).ToArray();
+if (distantStreaks<600 || visible.Length<distantStreaks+100 || visible.Count(r=>r.Size.x>=1.3f && r.Color.a>.12f)<120
+    || visible.Any(r=>r.Size.x>2.2f || r.Size.y>56 || r.Color.a>.69f || r.WorldPosition.z<2))
+    throw new Exception($"Expected a visible downpour far from the funnel, with an even denser inner band: {distantStreaks} distant, {visible.Length} near.");
+var probe = visible[0];
+var start=probe.WorldPosition;
+rain.Invoke(weather,new object[]{open,peakRain,1.77f});
+if (MathF.Abs(probe.WorldPosition.z-start.z)<8) throw new Exception("Rain streaks should fall in world space.");
+rain.Invoke(weather,new object[]{sheltered,0f,1.77f});
+if (drops.Any(r=>r.Enabled)) throw new Exception("Rain pool did not turn off with zero exposure.");
+await Wait(()=>!Storm().IsValid() && weather.StormStrength<.025f,"The storm cell did not subside.");
+var ambientRain = weather.PrecipitationAt(far);
+if (haze.Any(v=>v.Strength>.04f) || front.Any(r=>r.Color.a>.04f) || deck.Any(r=>!r.IsValid() || r.Color.a<.19f)
+    || MathF.Abs(ambientRain-.72f)>.04f || fog.MaximumOpacity>.25f || peakFog<=fog.MaximumOpacity)
+    throw new Exception("Background rain, clouds and lighter fog should persist after the storm cell fades.");
+rain.Invoke(weather,new object[]{far,ambientRain,1.75f});
+if (drops.Count(r=>r.Enabled && r.Color.a>.035f)<45) throw new Exception("Rain should be visible at the far edge between tornadoes.");
+return new {Passed=true,CloudLayers=deck.Length+front.Length,AmbientRain=ambientRain,MinimumCornerRain=distantRain,PeakRain=peakRain,PeakFog=peakFog,PeakHaze=peakHaze,DistantStreaks=distantStreaks,VisibleStormStreaks=visible.Length};

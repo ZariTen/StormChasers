@@ -1,0 +1,80 @@
+var scene = Game.ActiveScene;
+var house = scene.GetAllObjects( true ).Single( o => o.Name == "Roadside House" );
+var player = scene.GetAllComponents<PlayerController>().Single( x => x.Network.Owner == Connection.Local );
+GameObject Part( string name ) => scene.GetAllObjects( true ).Single( o => o.Name == name );
+SceneTraceResult Ray( Vector3 from, Vector3 to ) => scene.Trace.Ray( from, to ).IgnoreGameObjectHierarchy( player.GameObject ).Run();
+void RequireHit( Vector3 from, Vector3 to, string expected )
+{
+    var result = Ray( from, to );
+    if ( !result.Hit || result.GameObject?.Name != expected )
+        throw new Exception( $"Expected {expected} from {from} to {to}, hit {result.GameObject?.Name ?? "nothing"}." );
+}
+
+var foundation = Part( "House Foundation" );
+var footprint = foundation.GetComponent<BoxCollider>().Scale * foundation.WorldScale;
+if ( footprint.x < 330 || footprint.y < 370 ) throw new Exception( $"House footprint is still too small: {footprint}." );
+if ( house.WorldPosition.x < 500 || house.WorldPosition.y - footprint.x / 2 < 190
+    || Vector3.Dot( house.WorldRotation.Forward, Vector3.Left ) < 0.98f )
+    throw new Exception( "The house should sit clear of the east approach and face the road." );
+var driveway = house.WorldPosition.x;
+RequireHit( new Vector3( driveway, 0, 24 ), new Vector3( driveway, 0, -10 ), "East Approach" );
+RequireHit( new Vector3( driveway + 400, 0, 24 ), new Vector3( driveway + 400, 0, -10 ), "East Approach" );
+RequireHit( new Vector3( driveway, 180, 24 ), new Vector3( driveway, 180, -10 ), "Front Walk" );
+
+// Samples in front/side/height axes of the new house, independent of world yaw.
+Vector3 At( float x, float y, float z ) => house.WorldPosition + house.WorldRotation * new Vector3( x, y, z );
+void CheckFoundation() => RequireHit( At( -45, 0, 72 ), At( -45, 0, -16 ), "House Foundation" );
+void CheckRearWall() => RequireHit( At( -45, 0, 72 ), At( 232, 0, 72 ), "Rear Wall" );
+CheckFoundation();
+CheckRearWall();
+var entry = scene.Trace.Box( new BBox( new Vector3( -16, -16, 0 ), new Vector3( 16, 16, 72 ) ), At( -255, 0, 13 ), At( -45, 0, 13 ) )
+    .IgnoreGameObjectHierarchy( player.GameObject ).Run();
+if ( entry.Hit ) throw new Exception( $"The doorway is blocked by {entry.GameObject?.Name}." );
+
+var panel = Part( "Front Left Wall Panel" );
+var roof = Part( "Front Left Roof Panel" );
+var rightRoof = Part( "Front Right Roof Panel" );
+var marker = Part( "Left Driveway Marker" );
+foreach ( var piece in new[] { panel, roof, rightRoof, marker, Part( "Left Window Insert" ) } )
+    if ( !piece.Enabled || !piece.Tags.Has( "storm_breakable" ) || piece.GetComponent<MeshComponent>()?.Model is not { IsError: false } )
+        throw new Exception( $"{piece.Name} is not an enabled, independent breakable piece with a loaded mesh." );
+void CheckMaterial( GameObject obj, string material )
+{
+    var mesh = obj.GetComponent<MeshComponent>();
+    if ( mesh?.Model is not { IsError: false } || !mesh.Mesh.FaceHandles.Any( f => mesh.Mesh.GetFaceMaterial( f )?.ResourcePath == material ) )
+        throw new Exception( $"{obj.Name} did not load {material}." );
+}
+CheckMaterial( panel, "materials/generic/wall_brick_b.vmat" );
+CheckMaterial( Part( "Left Gable End" ), "materials/generic/wall_brick_b.vmat" );
+CheckMaterial( Part( "Front Walk" ), "materials/sbox/wall/concrete_painted_a.vmat" );
+CheckMaterial( roof, "models/sbox_props/gutters/gutter_b_metal_tiling.vmat" );
+CheckMaterial( Part( "Left Window Insert" ), "materials/glass/glass_a.vmat" );
+foreach ( var name in new[] { "House Foundation", "Rear Wall", "West Approach", "Intersection" } )
+    if ( Part( name ).Tags.Has( "storm_breakable" ) ) throw new Exception( $"The permanent {name} is marked breakable." );
+
+var wallStart = At( -235, -116, 48 );
+var wallEnd = At( -45, -116, 48 );
+var roofStart = At( -78, -102, 385 );
+var roofEnd = At( -78, -102, 48 );
+RequireHit( wallStart, wallEnd, panel.Name );
+RequireHit( roofStart, roofEnd, roof.Name );
+try
+{
+    panel.Enabled = false;
+    roof.Enabled = false;
+    await Task.Delay( 150 );
+    if ( Ray( wallStart, wallEnd ).Hit || Ray( roofStart, roofEnd ).Hit )
+        throw new Exception( "Removing one panel left collision sealing its opening." );
+    RequireHit( At( -78, 102, 385 ), At( -78, 102, 48 ), rightRoof.Name );
+    CheckFoundation();
+    CheckRearWall();
+}
+finally
+{
+    panel.Enabled = true;
+    roof.Enabled = true;
+}
+await Task.Delay( 150 );
+RequireHit( wallStart, wallEnd, panel.Name );
+RequireHit( roofStart, roofEnd, roof.Name );
+return new { Passed = true, Footprint = footprint.ToString(), Entry = "Clear", Removable = new[] { panel.Name, roof.Name }, Preserved = new[] { rightRoof.Name, "House Foundation", "Rear Wall" } };

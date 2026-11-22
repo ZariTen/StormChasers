@@ -1,0 +1,31 @@
+var type = TypeLibrary.GetType("StormTornadoProfile")?.TargetType;
+if (type is null) throw new Exception("Expected F0–F5 tornado profiles and a weighted roll.");
+var pick = type.GetMethod("RatingFromRoll");
+var profile = type.GetMethod("ForRating");
+var varied = type.GetMethod("ForSpawn");
+var counts = new int[6];
+for(var roll=0;roll<100;roll++) counts[(int)pick.Invoke(null,new object[]{roll})]++;
+if (!counts.SequenceEqual(new[]{45,27,15,8,4,1})) throw new Exception($"Unexpected category odds: {string.Join(",",counts)}");
+if (varied is null) throw new Exception("Each tornado should receive its own size roll, independent of rating.");
+float Width(int rating, float roll) => (float)type.GetProperty("WidthScale").GetValue(varied.Invoke(null,new object[]{rating,roll}));
+var bands = Enumerable.Range(0,6).Select(r=>new{Rating=r,Min=Width(r,0),Typical=Width(r,.5f),Max=Width(r,1)}).ToArray();
+for(var r=0;r<bands.Length;r++)
+{
+    var band=bands[r];
+    if (band.Min>=band.Typical || band.Typical>=band.Max || Width(r,-1)!=band.Min || Width(r,2)!=band.Max
+        || r>0 && (band.Min>=bands[r-1].Max || band.Typical<=bands[r-1].Typical))
+        throw new Exception($"Invalid or non-overlapping size band for F{r}.");
+}
+if (bands[1].Typical<=1.28f || bands[2].Typical<=1.67f || bands[3].Typical<=2.22f || bands[4].Typical<=2.94f)
+    throw new Exception("Typical F1–F4 funnels should be broader than the original presets.");
+float width=0, height=0;
+for(var rating=0;rating<6;rating++)
+{
+    var p=profile.Invoke(null,new object[]{rating});
+    var w=(float)type.GetProperty("WidthScale").GetValue(p);
+    var h=(float)type.GetProperty("FunnelHeight").GetValue(p);
+    if(w<=width || h<=height) throw new Exception($"F{rating} is not larger than the last category.");
+    width=w; height=h;
+}
+if(width<3.5f || height<4600) throw new Exception("F5 should be visibly larger than the original funnel.");
+return new {Passed=true,Odds=counts,WidthBands=bands,F5WidthMultiplier=width,F5Height=height};

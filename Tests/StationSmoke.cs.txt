@@ -1,0 +1,42 @@
+var scene = Game.ActiveScene;
+var station = scene.GetAllObjects(true).SingleOrDefault(o => o.Name == "Mike's Service Station");
+if (!station.IsValid()) throw new Exception("Missing the roadside gas station.");
+var player = scene.GetAllComponents<PlayerController>().Single(p => p.Network.Owner == Connection.Local);
+var spawn = scene.GetAllComponents<SpawnPoint>().Single(p => p.GameObject.Name == "Player Spawn");
+Vector3 At(float x, float y, float z) => station.WorldPosition + new Vector3(x,y,z);
+SceneTraceResult Ray(Vector3 from, Vector3 to) => scene.Trace.Ray(from, to).IgnoreGameObjectHierarchy(player.GameObject).Run();
+void Hit(Vector3 from, Vector3 to, string name)
+{
+    var result = Ray(from,to);
+    if (!result.Hit || result.GameObject?.Name != name) throw new Exception($"Expected {name}; hit {result.GameObject?.Name ?? "nothing"}.");
+}
+if ((player.WorldPosition - spawn.WorldPosition).Length > 20) throw new Exception($"Player is not at the station spawn: {player.WorldPosition}.");
+Hit(player.WorldPosition + Vector3.Up * 20, player.WorldPosition + Vector3.Down * 32, "Station Forecourt");
+Hit(At(-380,-450,24),At(-380,-450,-10),"West Approach");
+Hit(At(-380,-350,24),At(-380,-350,-10),"West Driveway");
+Hit(At(380,-350,24),At(380,-350,-10),"East Driveway");
+Hit(At(0,-350,24),At(0,-350,-10),"Flat Terrain");
+Hit(At(0,274,40),At(0,274,-12),"Station Shop Floor");
+var hull = new BBox(new Vector3(-16,-16,0),new Vector3(16,16,72));
+foreach (var x in new[] { -380f, 380f })
+{
+    var entrance = scene.Trace.Box(hull, At(x,-445,4), At(x,-260,4)).IgnoreGameObjectHierarchy(player.GameObject).Run();
+    if (entrance.Hit) throw new Exception($"Driveway connection at {x} is blocked by {entrance.GameObject?.Name}.");
+}
+var path = scene.Trace.Box(hull, At(0,128,9), At(0,274,9)).IgnoreGameObjectHierarchy(player.GameObject).Run();
+if (path.Hit) throw new Exception($"Station shop entrance is blocked by {path.GameObject?.Name}.");
+var pumps = scene.GetAllObjects(true).Where(o => o.Tags.Has("station_pump") && o.GetComponent<BoxCollider>().IsValid()).ToArray();
+if (pumps.Length != 4 || pumps.Any(p=>!p.Tags.Has("storm_breakable") || p.GetComponent<MeshComponent>()?.Model is not {IsError:false}))
+    throw new Exception("Expected four separately removable fuel pumps with loaded meshes.");
+var panel = scene.GetAllObjects(true).Single(o=>o.Name=="Canopy West Roof");
+if (!panel.Tags.Has("storm_breakable") || panel.GetComponent<MeshComponent>()?.Model is not {IsError:false}) throw new Exception("Canopy panel is not independently removable.");
+Hit(At(-80,5,250),At(-80,5,145),panel.Name);
+try
+{
+    panel.Enabled = false;
+    await Task.Delay(150);
+    if (Ray(At(-80,5,250),At(-80,5,145)).Hit) throw new Exception("The disabled canopy panel still collides.");
+    Hit(At(80,5,250),At(80,5,145),"Canopy East Roof");
+}
+finally { panel.Enabled = true; }
+return new { Passed = true, Spawn = player.WorldPosition.ToString(), Ground = "Station Forecourt", Pumps = pumps.Length };

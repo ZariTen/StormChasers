@@ -19,8 +19,9 @@ var menuType = TypeLibrary.GetType("Sandbox.SpawnMenuHost")?.TargetType;
 var menu = menuType is null ? null : scene.GetAllObjects(true).Select(x => x.Components.Get(menuType)).OfType<PanelComponent>().SingleOrDefault();
 if (menu?.Panel is null || Input.GetButtonOrigin("spawnmenu") != "Q")
     throw new Exception("The native Q spawn menu is not ready.");
-var hits = scene.Trace.Ray(controller.WorldPosition + Vector3.Up * 32, controller.WorldPosition + Vector3.Down * 128).IgnoreGameObjectHierarchy(controller.GameObject).Run();
-if (!hits.Hit || hits.GameObject?.Name != "Flat Terrain") throw new Exception($"Sandbox player did not spawn on the Storm Chasers terrain: {hits.GameObject?.Name}.");
+var spawnPoint = scene.GetAllComponents<SpawnPoint>().Single(x => x.GameObject.Name == "Player Spawn");
+var hits = scene.Trace.Ray(spawnPoint.WorldPosition + Vector3.Up * 32, spawnPoint.WorldPosition + Vector3.Down * 128).IgnoreGameObjectHierarchy(controller.GameObject).Run();
+if (!hits.Hit || hits.GameObject?.Name != "Station Forecourt") throw new Exception($"The Storm Chasers spawn point is not over the station lot: {hits.GameObject?.Name}.");
 var manager = menuType.Assembly.GetTypes().Single(x => x.Name == "GameManager");
 var spawn = manager.GetMethod("Spawn", new[] { typeof(string), typeof(string), typeof(bool) });
 async Task<GameObject> SpawnAndFind(string ident, Func<GameObject, bool> matches)

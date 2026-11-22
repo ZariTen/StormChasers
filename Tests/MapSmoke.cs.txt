@@ -1,0 +1,41 @@
+var scene = Game.ActiveScene;
+var player = scene.GetAllComponents<PlayerController>().Single(x => x.Network.Owner == Connection.Local);
+
+const float mapEdge = 6250;
+SceneTraceResult Ground( float x, float y ) => scene.Trace.Ray( new Vector3( x, y, 40 ), new Vector3( x, y, -20 ) )
+    .IgnoreGameObjectHierarchy( player.GameObject ).Run();
+
+var pavedSamples = new[] {
+    new Vector2( -1300, -135 ), new Vector2( -500, 135 ), new Vector2( 145, 145 ), new Vector2( 0, 0 ),
+    new Vector2( 1050, 135 ), new Vector2( 1680, -135 ), new Vector2( -135, -1080 ), new Vector2( 135, 1080 ),
+    new Vector2( -mapEdge + 4, -135 ), new Vector2( mapEdge - 4, 135 ),
+    new Vector2( -135, -mapEdge + 4 ), new Vector2( 135, mapEdge - 4 )
+};
+foreach ( var point in pavedSamples )
+{
+    var road = Ground( point.x, point.y );
+    if ( !road.Hit || !road.GameObject.Tags.Has( "storm_road" ) || MathF.Abs( road.HitPosition.z - 1 ) > 0.2f )
+        throw new Exception( $"Missing wide, continuous asphalt at {point}: {road.GameObject?.Name}." );
+    var mesh = road.GameObject.GetComponent<MeshComponent>();
+    if ( mesh?.Model is not { IsError: false } || !mesh.Mesh.FaceHandles.All( f => mesh.Mesh.GetFaceMaterial( f )?.ResourcePath == "materials/generic/floor_asphalt_b.vmat" ) )
+        throw new Exception( $"{road.GameObject.Name} does not use the stock asphalt material." );
+}
+var field = Ground( 375, 400 ).GameObject;
+var grass = field?.GetComponent<MeshComponent>();
+if ( field?.Name != "Flat Terrain" || grass?.Model is not { IsError: false }
+    || !grass.Mesh.FaceHandles.Any( f => grass.Mesh.GetFaceMaterial( f )?.ResourcePath == "materials/grass/floor_grass_a.vmat" ) )
+    throw new Exception( "Expected textured grass beside the road, not extra pavement." );
+foreach ( var x in new[] { -mapEdge, mapEdge } )
+foreach ( var y in new[] { -mapEdge, mapEdge } )
+{
+    if ( Ground( x * 0.99f, y * 0.99f ).GameObject != field )
+        throw new Exception( $"Missing field collision near corner {x},{y}." );
+}
+foreach ( var edge in new[] { new Vector2( mapEdge, 0 ), new Vector2( -mapEdge, 0 ), new Vector2( 0, mapEdge ), new Vector2( 0, -mapEdge ) } )
+{
+    var inside = edge * 0.999f;
+    var outside = edge * 1.001f;
+    if ( Ground( inside.x, inside.y ).GameObject?.Tags.Has( "storm_road" ) != true || Ground( outside.x, outside.y ).Hit )
+        throw new Exception( $"Road and terrain do not end together at {edge}." );
+}
+return new { Passed = true, RoadSamples = pavedSamples.Length };

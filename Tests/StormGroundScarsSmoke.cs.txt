@@ -1,0 +1,42 @@
+var scene=Game.ActiveScene;
+var source=scene.GetAllComponents<StormWeather>().SingleOrDefault();
+if (!source.IsValid()) throw new Exception("Map Weather must be running.");
+var live=scene.GetAllObjects(true).FirstOrDefault(o=>o.Name=="Tornado Ground Scars");
+if(!live.IsValid()) throw new Exception("No bounded ground scar system found in Play mode.");
+var descriptor=TypeLibrary.GetType("StormGroundScars");
+var test=scene.CreateObject(true);
+test.NetworkMode=NetworkMode.Never;
+var scars=test.Components.Create(descriptor,true);
+try
+{
+    var flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
+    var lay=descriptor.TargetType.GetMethod("Stamp",flags);
+    var update=descriptor.TargetType.GetMethod("FadeMarks",flags);
+    var a=new Vector3(1900,-90,0);
+    var b=new Vector3(1900,-450,0);
+    var bad=new Vector3(6410,6420,0);
+    bool Apply(Vector3 p,float t)=> (bool)lay.Invoke(scars,new object[]{p,Vector3.Left,2,.93f,t});
+    GameObject[] Marks()=>test.Children.Where(o=>o.Enabled).ToArray();
+    if(!Apply(a,2) || !Apply(b,2) || Apply(bad,2) || Apply(new Vector3(-1100,518,0),2) || Marks().Length!=2)
+        throw new Exception("Grass and roads should mark, but not the station or off-map space.");
+    if(Marks().Any(o=>o.GetComponent<Collider>().IsValid() || o.NetworkMode!=NetworkMode.Never))
+        throw new Exception("Scars must remain client-local and nonblocking.");
+    if(Marks().Select(o=>o.GetComponent<Decal>().Decals.Single().ColorTexture).Distinct().Count()!=2)
+        throw new Exception("Grass and roads need distinct damage textures.");
+    var beforeFade=Marks().ToDictionary(o=>o.Id,o=>o.GetComponent<Decal>().ColorTint.Evaluate(0,0).a);
+    update.Invoke(scars,new object[]{241f});
+    if(Marks().Length!=2 || Marks().Any(o=>o.GetComponent<Decal>().ColorTint.Evaluate(0,0).a!=beforeFade[o.Id]))
+        throw new Exception("Scar marks should stay fully visible for more than four minutes.");
+    update.Invoke(scars,new object[]{292f});
+    if(Marks().Length!=2 || Marks().Any(o=>o.GetComponent<Decal>().ColorTint.Evaluate(0,0).a>=beforeFade[o.Id]))
+        throw new Exception("Marks must fade progressively before they stop rendering.");
+    update.Invoke(scars,new object[]{302f});
+    if(Marks().Length!=0) throw new Exception("Expired marks should not render.");
+    for(var i=0;i<300;i++) Apply(new Vector3(2000+i*10,-480,0),310+i*.06f);
+    if(Marks().Length!=256 || test.Children.Count!=256 || test.Children.Any(o=>o.Components.GetAll<Decal>(FindMode.EverythingInSelf).Count()!=1))
+        throw new Exception("Long storms must recycle a fixed-size decal pool.");
+    update.Invoke(scars,new object[]{630f});
+    if(Marks().Length!=0) throw new Exception("All pooled marks should be inactive after cleanup.");
+    return new {Passed=true, Pool=test.Children.Count, ActiveAfterCleanup=Marks().Length};
+}
+finally { test.Destroy(); }

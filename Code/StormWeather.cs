@@ -18,6 +18,7 @@ public sealed class StormWeather : Component
 	GameObject rainPool;
 	StormTornadoFunnel tornado;
 	StormAudio audio;
+	StormGroundScars groundScars;
 	Fog backgroundFog;
 	StormTornadoProfile stormProfile = StormTornadoProfile.ForRating( 0 );
 	float openCoreRadius;
@@ -160,6 +161,11 @@ public sealed class StormWeather : Component
 		windTravelTime = t;
 		UpdateClouds( t );
 		UpdateHaze();
+		if ( !Application.IsDedicatedServer )
+		{
+			if ( !groundScars.IsValid() ) groundScars = CreateObject( GameObject, "Tornado Ground Scars" ).Components.Create<StormGroundScars>();
+			groundScars.Follow( tornado, t );
+		}
 
 		var camera = Scene.Camera;
 		var eye = camera.IsValid() ? camera.WorldPosition : Vector3.Zero;

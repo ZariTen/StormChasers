@@ -147,9 +147,9 @@ public sealed class StormWeather : Component
 		if ( tornado.IsValid() )
 		{
 			StormCenter = tornado.WorldPosition;
-			stormProfile = tornado.Profile;
+			stormProfile = tornado.VisualProfile;
 			openCoreRadius = tornado.OpenCoreRadius;
-			severity = Math.Clamp( tornado.Rating, 0, 5 ) / 5f;
+			severity = Math.Clamp( tornado.VisualSeverity, 0, 1 );
 			rainBearing = tornado.RainBearing;
 		}
 		var target = tornado.IsValid() ? 1f : 0f;
@@ -190,7 +190,7 @@ public sealed class StormWeather : Component
 		if ( openCoreRadius <= 0 ) return rain;
 		var distance = (position - StormCenter).WithZ( 0 ).Length;
 		var opening = 1 - StormWeatherTextures.Smooth( (distance - openCoreRadius) / 460 );
-		return rain * (1 - .87f * opening * StormStrength);
+		return rain * (1 - .87f * opening * StormStrength * (tornado.IsValid() ? tornado.WedgeAmount : 1));
 	}
 
 	float CellStrengthAt( Vector3 position )

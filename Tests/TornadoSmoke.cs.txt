@@ -11,7 +11,8 @@ while (DateTime.UtcNow < deadline)
     if (live.Length > 1) throw new Exception("More than one tornado was spawned.");
     var candidate = live.SingleOrDefault();
     if (candidate.IsValid() && OnMap(candidate.WorldPosition)
-        && candidate.GetComponent<StormTornadoFunnel>() is { ElapsedSample: >= .5f and < 4f }
+        && candidate.GetComponent<StormTornadoFunnel>() is { Lifetime: >=120f and <=180f, ElapsedSample: >= .5f } active
+        && active.ElapsedSample < active.Lifetime - 2f
         && Body(candidate).IsValid() && Layer(candidate, "Ground Dust").Length >= 16)
     {
         tornado = candidate;
@@ -49,10 +50,13 @@ if (!tornado.Network.Active || ageSample?.GetValue(effect) is not float elapsed 
 var trace = scene.Trace.Ray(tornado.WorldPosition + Vector3.Up * 64, tornado.WorldPosition + Vector3.Down * 128).WithoutTags("player").Run();
 if (!OnMap(tornado.WorldPosition) || !trace.Hit)
     throw new Exception("Tornado drifted away from the map surface.");
-for (var i = 0; i < 300 && Funnels().All(x => x.Id == tornado.Id); i++)
+var turnoverDeadline = DateTime.UtcNow.AddSeconds(effect.Lifetime - elapsed + 15);
+while (DateTime.UtcNow < turnoverDeadline && Funnels().All(x => x.Id == tornado.Id))
 {
     await Task.Delay(100);
-    if (Funnels().Length > 1) throw new Exception("More than one tornado was spawned.");
+    var live = Funnels();
+    if (live.Length > 1) throw new Exception("More than one tornado was spawned.");
+    if (tornado.IsValid() && !OnMap(tornado.WorldPosition)) throw new Exception("The extended track left the map.");
 }
 var next = Funnels();
 if (tornado.IsValid() || next.Length != 1 || next[0].Id == tornado.Id || body.IsValid()

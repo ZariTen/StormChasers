@@ -20,9 +20,10 @@ var haze = root.Children.Single(o=>o.Name=="Rain Haze").Children
 if (front.Length<2 || front.Any(r=>r.Billboard!=SpriteRenderer.BillboardMode.None || r.Size.x<4500)
     || drops.Length<300 || haze.Length<2 || haze.Any(v=>!v.IsValid()) || root.Children.Any(o=>o.Name=="Rain Shafts"))
     throw new Exception("Expected a broad storm shelf, fine raindrops and a volume-based distant veil, not striped cards.");
-async Task Wait(Func<bool> ready, string message)
+async Task Wait(Func<bool> ready, string message, float timeout = 26f)
 {
-    for(var i=0;i<260;i++)
+    var deadline = DateTime.UtcNow.AddSeconds(timeout);
+    while (DateTime.UtcNow < deadline)
     {
         if (ready()) return;
         await Task.Delay(100);
@@ -70,7 +71,8 @@ rain.Invoke(weather,new object[]{open,peakRain,1.77f});
 if (MathF.Abs(probe.WorldPosition.z-start.z)<8) throw new Exception("Rain streaks should fall in world space.");
 rain.Invoke(weather,new object[]{sheltered,0f,1.77f});
 if (drops.Any(r=>r.Enabled)) throw new Exception("Rain pool did not turn off with zero exposure.");
-await Wait(()=>!Storm().IsValid() && weather.StormStrength<.025f,"The storm cell did not subside.");
+var active = Storm().GetComponent<StormTornadoFunnel>();
+await Wait(()=>!Storm().IsValid() && weather.StormStrength<.025f,"The storm cell did not subside.", active.Lifetime - active.ElapsedSample + 15f);
 var ambientRain = weather.PrecipitationAt(far);
 if (haze.Any(v=>v.Strength>.04f) || front.Any(r=>r.Color.a>.04f) || deck.Any(r=>!r.IsValid() || r.Color.a<.19f)
     || MathF.Abs(ambientRain-.72f)>.04f || fog.MaximumOpacity>.25f || peakFog<=fog.MaximumOpacity)

@@ -8,8 +8,10 @@ public sealed class StormTornadoFunnel : Component
 	[Property, Sync] public float ShapeRoll { get; set; } = .5f;
 	[Property, Sync] public float Lifetime { get; set; } = 18f;
 	[Sync] public float ElapsedSample { get; private set; }
+	[Sync] Vector2 StageTransition { get; set; } = new( -1, 0 ); // previous rating and scheduled upgrade age
 	public StormTornadoProfile Profile => StormTornadoProfile.ForSpawn( Rating, SizeRoll );
-	public StormFunnelShape Silhouette => Rating >= 5 ? StormFunnelShape.Wedge : ShapeRoll switch
+	public StormFunnelShape Silhouette => Rating >= 5 ? StormFunnelShape.Wedge : BaseSilhouette;
+	StormFunnelShape BaseSilhouette => ShapeRoll switch
 	{
 		< .30f => StormFunnelShape.Cone,
 		< .46f => StormFunnelShape.VShape,
@@ -21,8 +23,22 @@ public sealed class StormTornadoFunnel : Component
 	internal float VisibleFloor { get; private set; }
 	internal float CondensationOpacity { get; private set; }
 	static float WedgeScale( StormTornadoProfile profile ) => profile.WidthScale / StormTornadoProfile.ForRating( 5 ).WidthScale;
-	public float OpenCoreRadius => Rating >= 5 ? 480f * WedgeScale( Profile ) : 0f;
-	internal const float DriftSpeed = 78f;
+	float UpgradeBlend => StageTransition.x < 0 ? 1f : Smooth( ((float)age - StageTransition.y) / 3.5f );
+	internal float WedgeAmount => Rating >= 5 ? UpgradeBlend : 0f;
+	internal float VisualSeverity => (StageTransition.x < 0 ? Rating : Blend( StageTransition.x, Rating, UpgradeBlend )) / 5f;
+	internal StormTornadoProfile VisualProfile
+	{
+		get
+		{
+			var target = Profile;
+			var blend = UpgradeBlend;
+			if ( blend >= 1 ) return target;
+			var previous = StormTornadoProfile.ForSpawn( (int)StageTransition.x, SizeRoll );
+			return new( Blend( previous.WidthScale, target.WidthScale, blend ), Blend( previous.FunnelHeight, target.FunnelHeight, blend ) );
+		}
+	}
+	public float OpenCoreRadius => 480f * WedgeScale( VisualProfile ) * WedgeAmount;
+	[Property] public float DriftSpeed { get; set; } = 36f;
 	const int CoreCount = 52;
 	const int VaporCount = 192;
 	const int CloudCount = 74;
@@ -44,6 +60,43 @@ public sealed class StormTornadoFunnel : Component
 	SpriteRenderer eyeCrown;
 	SpriteRenderer eyeSkylight;
 	TimeSince age;
+	StormTornadoEvolution evolution;
+	StormTornadoRoute route;
+	int nextStage;
+
+	internal void ConfigureRoute( StormTornadoRoute plan )
+	{
+		route = plan;
+		FollowRoute( 0 );
+	}
+
+	void FollowRoute( float seconds )
+	{
+		var sample = route.Sample( seconds );
+		WorldPosition = sample.Position;
+		WorldRotation = sample.Rotation;
+		DriftSpeed = sample.Speed;
+	}
+
+	internal void ConfigureEvolution( StormTornadoEvolution plan )
+	{
+		evolution = plan;
+		Lifetime = plan.Lifetime;
+		Rating = plan.Stages[0].Rating;
+		StageTransition = new( -1, 0 );
+		nextStage = 1;
+	}
+
+	void AdvanceEvolution( float seconds )
+	{
+		if ( evolution is null ) return;
+		while ( nextStage < evolution.Stages.Length && seconds >= evolution.Stages[nextStage].At )
+		{
+			var stage = evolution.Stages[nextStage++];
+			StageTransition = new( Rating, stage.At );
+			Rating = stage.Rating;
+		}
+	}
 
 	protected override void OnStart()
 	{
@@ -124,7 +177,9 @@ public sealed class StormTornadoFunnel : Component
 	{
 		if ( Networking.IsHost )
 		{
-			WorldPosition += WorldRotation.Forward * (DriftSpeed * Time.Delta);
+			if ( route is not null ) FollowRoute( age );
+			else WorldPosition += WorldRotation.Forward * (DriftSpeed * Time.Delta );
+			AdvanceEvolution( age );
 			if ( GameObject.Network.Active && age >= ElapsedSample + .5f ) ElapsedSample = age;
 		}
 		// Late joiners catch up without sending every sprite pose or restarting the lifecycle.
@@ -135,26 +190,28 @@ public sealed class StormTornadoFunnel : Component
 	void Animate()
 	{
 		float t = age;
-		var profile = Profile;
+		var profile = VisualProfile;
 		var widthScale = profile.WidthScale;
 		var groundScale = MathF.Sqrt( widthScale );
-		var wedge = Rating >= 5;
-		var wedgeScale = wedge ? WedgeScale( profile ) : 1f;
-		var progress = Math.Clamp( t / MathF.Max( .1f, Lifetime ), 0, 1 );
-		var cloudLife = Smooth( progress / .10f ) * Smooth( (1 - progress) / .09f );
-		var condensation = Smooth( progress / .095f ) * Smooth( (1 - progress) / .10f );
-		var circulation = Smooth( progress / .055f ) * Smooth( (1 - progress) / .095f );
-		var rope = Smooth( (progress - .71f) / .24f );
+		var wedge = WedgeAmount;
+		var wedgeScale = WedgeScale( profile );
+		var phaseScale = Math.Clamp( Lifetime, .1f, 24f );
+		var progress = t / phaseScale;
+		var remaining = (Lifetime - t) / phaseScale;
+		var cloudLife = Smooth( progress / .10f ) * Smooth( remaining / .09f );
+		var condensation = Smooth( progress / .095f ) * Smooth( remaining / .10f );
+		var circulation = Smooth( progress / .055f ) * Smooth( remaining / .095f );
+		var rope = Smooth( (.29f - remaining) / .24f );
 		// Condensation follows moisture, not ground contact. The circulation can outlast the visible funnel.
 		var visibleFloor = .83f * (1 - Smooth( progress / .31f )) + (.38f + .25f * ShapeRoll) * rope;
-		VisibleFloor = wedge ? .34f * (1 - Smooth( progress / .20f )) + .20f * rope : visibleFloor;
+		VisibleFloor = Blend( visibleFloor, .34f * (1 - Smooth( progress / .20f )) + .20f * rope, wedge );
 		CondensationOpacity = condensation;
 		if ( volume.IsValid() ) AnimateVolume( t, profile, groundScale, wedge, rope, cloudLife );
 		else
 		{
-			AnimateFallback( t, profile, groundScale, wedge, wedgeScale, rope, visibleFloor, condensation );
+			AnimateFallback( t, profile, groundScale, wedge, wedgeScale, rope, VisibleFloor, condensation );
 			AnimateClouds( t, profile, groundScale, cloudLife );
-			UpdateEyeCrown( t, profile.FunnelHeight, wedge ? wedgeScale : 0, cloudLife );
+			UpdateEyeCrown( t, profile.FunnelHeight, wedge > 0 ? wedgeScale : 0, cloudLife * wedge );
 		}
 		AnimateGround( t, groundScale, wedge, wedgeScale, circulation );
 		AnimateDebris( t, profile, groundScale, wedge, wedgeScale, circulation, progress, rope );
@@ -163,30 +220,32 @@ public sealed class StormTornadoFunnel : Component
 	Vector3 CondensationAxis( float h, float t, float groundScale, float rope )
 	{
 		var axis = Axis( h, t ) * groundScale + new Vector3( 240, -420, 0 ) * ((ShapeRoll - .5f) * h * groundScale);
-		var contortion = rope + (Silhouette == StormFunnelShape.Rope ? .94f : 0 );
-		if ( Silhouette == StormFunnelShape.Cylinder )
+		var contortion = rope + (BaseSilhouette == StormFunnelShape.Rope ? .94f : 0 );
+		if ( BaseSilhouette == StormFunnelShape.Cylinder )
 			axis += new Vector3( 175, -315, 0 ) * (groundScale * MathF.Sin( h * MathF.PI ) * (.66f + .34f * MathF.Cos( t * .28f )));
 		var wave = MathF.Sin( h * MathF.Tau ) * MathF.Sin( h * MathF.PI ) * (.85f + .15f * MathF.Sin( t * .66f ) );
 		return axis + new Vector3( 180, -640, 0 ) * (contortion * wave * groundScale);
 	}
 
-	void AnimateVolume( float t, StormTornadoProfile profile, float groundScale, bool wedge, float rope, float cloudLife )
+	void AnimateVolume( float t, StormTornadoProfile profile, float groundScale, float wedge, float rope, float cloudLife )
 	{
-		var sections = wedge ? StormFunnelSections.WalkInWedge : StormFunnelSections.For( Silhouette );
-		var width = wedge ? WedgeScale( profile ) : profile.WidthScale * (1 - .29f * rope);
-		var radii = sections.LowerRadii * width;
-		var topRadius = sections.TopRadius * width;
-		Vector3 Center( float h ) => wedge ? Axis( h, t ) * .42f : CondensationAxis( h, t, groundScale, rope );
+		var sections = StormFunnelSections.For( BaseSilhouette );
+		var wall = StormFunnelSections.WalkInWedge;
+		var width = profile.WidthScale * (1 - .29f * rope);
+		var wedgeScale = WedgeScale( profile );
+		var radii = sections.LowerRadii * (width * (1 - wedge)) + wall.LowerRadii * (wedgeScale * wedge);
+		var topRadius = Blend( sections.TopRadius * width, wall.TopRadius * wedgeScale, wedge );
+		Vector3 Center( float h ) => Mix( CondensationAxis( h, t, groundScale, rope ), Axis( h, t ) * .42f, wedge );
 		var a = Center( 0 );
 		var b = Center( .25f );
 		var c = Center( .50f );
 		var d = Center( .75f );
 		var e = Center( 1 );
 		var axisExtent = MathF.Max( MathF.Max( b.Length, c.Length ), MathF.Max( d.Length, e.Length ) );
-		var extent = topRadius * (wedge ? 1.21f : 1.39f) + axisExtent + 95;
+		var extent = topRadius * Blend( 1.39f, 1.21f, wedge ) + axisExtent + 95;
 		var cloudScale = .78f + .22f * groundScale;
-		var cloudBounds = wedge ? new Vector3( 3850, 3150, 950 ) * WedgeScale( profile ) : new Vector3( 2460, 1700, 705 ) * cloudScale;
-		var cloudCenter = e + new Vector3( wedge ? 0 : -215 * cloudScale, wedge ? 0 : 135 * cloudScale, profile.FunnelHeight + 180 );
+		var cloudBounds = Mix( new Vector3( 2460, 1700, 705 ) * cloudScale, new Vector3( 3850, 3150, 950 ) * wedgeScale, wedge );
+		var cloudCenter = e + new Vector3( -215 * cloudScale * (1 - wedge), 135 * cloudScale * (1 - wedge), profile.FunnelHeight + 180 );
 		var halfX = MathF.Max( extent, MathF.Abs( cloudCenter.x ) + cloudBounds.x );
 		var halfY = MathF.Max( extent, MathF.Abs( cloudCenter.y ) + cloudBounds.y );
 		var fullHeight = MathF.Max( profile.FunnelHeight * 1.11f, cloudCenter.z + cloudBounds.z );
@@ -196,6 +255,7 @@ public sealed class StormTornadoFunnel : Component
 		var forward = WorldRotation.Forward.WithZ( 0 ).Normal;
 		volume.Attributes.Set( "VortexForward", new Vector2( forward.x, forward.y ) );
 		volume.Attributes.Set( "VortexBounds", new Vector4( extent, fullHeight, profile.FunnelHeight, OpenCoreRadius ) );
+		volume.Attributes.Set( "VortexWedge", wedge );
 		volume.Attributes.Set( "VortexRadii", radii );
 		volume.Attributes.Set( "VortexPhase", new Vector4( topRadius, VisibleFloor, CondensationOpacity, t ) );
 		volume.Attributes.Set( "VortexAxisX", new Vector4( a.x, b.x, c.x, d.x ) );
@@ -205,10 +265,10 @@ public sealed class StormTornadoFunnel : Component
 		volume.Attributes.Set( "StormCloudBounds", new Vector4( cloudBounds.x, cloudBounds.y, cloudBounds.z, cloudLife ) );
 	}
 
-	void AnimateFallback( float t, StormTornadoProfile profile, float groundScale, bool wedge, float wedgeScale, float rope, float visibleFloor, float condensation )
+	void AnimateFallback( float t, StormTornadoProfile profile, float groundScale, float wedge, float wedgeScale, float rope, float visibleFloor, float condensation )
 	{
 		var widthScale = profile.WidthScale;
-		var sections = StormFunnelSections.For( Silhouette );
+		var sections = StormFunnelSections.For( BaseSilhouette );
 		for ( var i = 0; i < vapor.Length; i++ )
 		{
 			var renderer = vapor[i];
@@ -217,7 +277,7 @@ public sealed class StormTornadoFunnel : Component
 			var h = Wrap( phase + t * (core ? .052f : .045f + .018f * Seed( i + 54 )) );
 			var fluff = Seed( i + 9 );
 			var wisp = !core && i % 4 == 0;
-			if ( wedge )
+			if ( wedge >= 1 )
 			{
 				PlaceWedgeWall( renderer, i, h, t, fluff, core, wisp, condensation, profile.FunnelHeight, wedgeScale );
 				continue;
@@ -238,10 +298,22 @@ public sealed class StormTornadoFunnel : Component
 			renderer.LocalPosition = bend + Orbit( angle, radius, .84f ) + Vector3.Up * (18 + h * profile.FunnelHeight);
 			renderer.Size = new Vector2( size, size * (.89f + .31f * fluff) );
 			renderer.Color = new Color( shade * .91f, shade * .96f, shade * 1.02f, edge * condensation * (core ? 1 : wisp ? .32f : .83f) );
+			if ( wedge > 0 )
+			{
+				var beforePosition = renderer.LocalPosition;
+				var beforeSize = renderer.Size;
+				var beforeColor = renderer.Color;
+				PlaceWedgeWall( renderer, i, h, t, fluff, core, wisp, condensation, profile.FunnelHeight, wedgeScale );
+				renderer.LocalPosition = Mix( beforePosition, renderer.LocalPosition, wedge );
+				renderer.Size = beforeSize * (1 - wedge) + renderer.Size * wedge;
+				var wallColor = renderer.Color;
+				renderer.Color = new Color( Blend( beforeColor.r, wallColor.r, wedge ), Blend( beforeColor.g, wallColor.g, wedge ), Blend( beforeColor.b, wallColor.b, wedge ), Blend( beforeColor.a, wallColor.a, wedge ) );
+				renderer.FogStrength = Blend( .56f, .30f, wedge );
+			}
 		}
 	}
 
-	void AnimateGround( float t, float groundScale, bool wedge, float wedgeScale, float circulation )
+	void AnimateGround( float t, float groundScale, float wedge, float wedgeScale, float circulation )
 	{
 		for ( var i = 0; i < dust.Length; i++ )
 		{
@@ -251,7 +323,7 @@ public sealed class StormTornadoFunnel : Component
 			var angle = i * GoldenAngle + t * (1.53f + .41f * v) + cycle * 1.45f;
 			var skirt = i % 3 != 0;
 			var radius = (skirt ? 140 + 675 * cycle * (.75f + .48f * v) : 52 + 195 * cycle) * groundScale;
-			if ( wedge ) radius += 880 * wedgeScale;
+			radius += 880 * wedgeScale * wedge;
 			var size = (skirt ? 230 + 405 * cycle + 95 * v : 204 + 190 * cycle + 90 * v) * groundScale;
 			var band = .67f + .33f * MathF.Cos( angle * 2 - t * 2.7f );
 			var opacity = Smooth( cycle / .10f ) * Smooth( (1 - cycle) / .39f ) * (.63f + .37f * band);
@@ -264,10 +336,10 @@ public sealed class StormTornadoFunnel : Component
 		}
 	}
 
-	void AnimateDebris( float t, StormTornadoProfile profile, float groundScale, bool wedge, float wedgeScale, float circulation, float progress, float rope )
+	void AnimateDebris( float t, StormTornadoProfile profile, float groundScale, float wedge, float wedgeScale, float circulation, float progress, float rope )
 	{
-		var sections = wedge ? StormFunnelSections.WalkInWedge : StormFunnelSections.For( Silhouette );
-		var funnelWidth = wedge ? wedgeScale : profile.WidthScale * (1 - .29f * rope);
+		var sections = StormFunnelSections.For( BaseSilhouette );
+		var funnelWidth = profile.WidthScale * (1 - .29f * rope);
 		var loft = .20f + .80f * Smooth( progress / .30f );
 		for ( var i = 0; i < debris.Length; i++ )
 		{
@@ -283,11 +355,11 @@ public sealed class StormTornadoFunnel : Component
 			var escape = thrown ? Smooth( (phase - .48f) / .48f ) : 0;
 			var h = Math.Clamp( .008f + (rise - .17f * escape) * loft, 0, .97f );
 			var angle = i * GoldenAngle + t * (.79f + .57f * v) + phase * (heavy ? 5.3f : 7.9f);
-			var edge = sections.Sample( h ) * funnelWidth;
+			var edge = Blend( sections.Sample( h ) * funnelWidth, StormFunnelSections.WalkInWedge.Sample( h ) * wedgeScale, wedge );
 			var skirt = (heavy ? 145 + 420 * drift : 195 + 540 * drift + 630 * h) * groundScale;
 			var radius = edge * (.83f + .32f * v) + skirt * (.45f + .55f * Smooth( phase * 3 ));
 			var kick = groundScale * escape * (320 + 470 * drift);
-			var axis = wedge ? Axis( h, t ) * .42f : CondensationAxis( h, t, groundScale, rope );
+			var axis = Mix( CondensationAxis( h, t, groundScale, rope ), Axis( h, t ) * .42f, wedge );
 			var position = axis + Orbit( angle, radius, .88f ) + new Vector3( .65f * kick, -.76f * kick, h * profile.FunnelHeight );
 			piece.LocalPosition = position;
 			piece.LocalRotation = Rotation.From( new Angles( t * (100 + 195 * v) + i * 23, t * (75 + 138 * drift) + i * 31, t * (100 + 175 * drift) + i * 17 ) );
@@ -358,8 +430,8 @@ public sealed class StormTornadoFunnel : Component
 	{
 		// A low rotating wall cloud wraps the funnel and merges into a broad, slower-moving cloud deck.
 		const int loweringCount = 18;
-		var hasCore = OpenCoreRadius > 0;
-		var center = hasCore ? Axis( 1, t ) * .42f : CondensationAxis( 1, t, groundScale, 0 );
+		var wedge = WedgeAmount;
+		var center = Mix( CondensationAxis( 1, t, groundScale, 0 ), Axis( 1, t ) * .42f, wedge );
 		for ( var i = 0; i < clouds.Length; i++ )
 		{
 			var cloud = clouds[i];
@@ -371,10 +443,10 @@ public sealed class StormTornadoFunnel : Component
 			var angle = i * GoldenAngle + t * (lowering ? .23f + .08f * v : .07f + .036f * v);
 			var bank = .5f + .5f * MathF.Cos( angle - ClearFlank + .48f * MathF.Sin( t * .19f ) );
 			var ripple = MathF.Sin( t * .47f + i * GoldenAngle ) * (lowering ? 56 : 102);
-			var descent = hasCore ? 340 : 530 + 210 * bank;
+			var descent = Blend( 530 + 210 * bank, 340, wedge );
 			var altitude = profile.FunnelHeight + (lowering ? -descent + 390 * v : 60 + 850 * v + 185 * radial) + ripple;
 			var cloudRadius = radius * (.73f + .27f * j + .40f * bank) * groundScale;
-			if ( hasCore ) cloudRadius += lowering ? 1300 : 930;
+			cloudRadius += (lowering ? 1300 : 930) * wedge;
 			var offset = Orbit( angle, cloudRadius, lowering ? .92f : 1.25f );
 			var width = (lowering ? 770 + 570 * j : 1290 + 1100 * j) * groundScale;
 			var shade = lowering ? .059f + .085f * v + .07f * bank : .18f + .15f * v + .06f * bank;
@@ -395,5 +467,7 @@ public sealed class StormTornadoFunnel : Component
 	static Vector3 Orbit( float angle, float radius, float aspect ) => new( MathF.Cos( angle ) * radius, MathF.Sin( angle ) * radius * aspect, 0 );
 	static float Wrap( float v ) => v - MathF.Floor( v );
 	static float Smooth( float v ) { v = Math.Clamp( v, 0, 1 ); return v * v * (3 - 2 * v); }
+	static float Blend( float a, float b, float t ) => a + (b - a) * t;
+	static Vector3 Mix( Vector3 a, Vector3 b, float t ) => a + (b - a) * t;
 	static float Seed( int index ) => StormSmokeTexture.Hash( index, 31, 851 );
 }

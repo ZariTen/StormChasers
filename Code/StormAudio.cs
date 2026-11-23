@@ -30,7 +30,7 @@ internal sealed class StormAudio : Component
 		var roarPitch = 1f;
 		if ( tornado.IsValid() )
 		{
-			var severity = Math.Clamp( tornado.Rating / 5f, 0, 1 );
+			var severity = Math.Clamp( tornado.VisualSeverity, 0, 1 );
 			var position = tornado.WorldPosition + Vector3.Up * 110;
 			if ( !hasRoarPosition || roarGain < .016f ) roarPosition = position;
 			else roarPosition += (position - roarPosition) * (1 - MathF.Exp( -delta * 7 ));

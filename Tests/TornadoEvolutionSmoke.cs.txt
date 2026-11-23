@@ -1,0 +1,72 @@
+var flags = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public;
+var type = TypeLibrary.GetType("StormTornadoEvolution")?.TargetType;
+if (type is null) throw new Exception("Live tornadoes do not have a randomized evolution plan.");
+var roll = type.GetMethod("Roll", flags);
+var lifetimeProperty = type.GetProperty("Lifetime", flags);
+var stagesProperty = type.GetProperty("Stages", flags);
+var random = new Random(74921);
+var paths = new System.Collections.Generic.HashSet<string>();
+float shortest=180, longest=120;
+object example=null;
+for(var i=0;i<8000;i++)
+{
+    var plan=roll.Invoke(null,new object[]{random});
+    var life=(float)lifetimeProperty.GetValue(plan);
+    if(life<120 || life>180) throw new Exception($"Invalid lifetime: {life}.");
+    shortest=MathF.Min(shortest,life); longest=MathF.Max(longest,life);
+    var stages=((Array)stagesProperty.GetValue(plan)).Cast<object>().Select(s=>(Rating:(int)s.GetType().GetProperty("Rating").GetValue(s), At:(float)s.GetType().GetProperty("At").GetValue(s))).ToArray();
+    if(stages.Length<2 || stages[0].At!=0 || stages[0].Rating<0 || stages[^1].Rating>5 || stages[^1].At>life-20)
+        throw new Exception("Every tornado must start below its peak and reach it well before fading.");
+    for(var j=1;j<stages.Length;j++)
+    {
+        var wait=stages[j].At-stages[j-1].At;
+        if(wait<4.999f || wait>30.001f || stages[j].Rating<=stages[j-1].Rating)
+            throw new Exception("Expected strictly rising ratings and 5–30 seconds between upgrades.");
+    }
+    var path=string.Join(",",stages.Select(s=>s.Rating));
+    paths.Add(path);
+    if(path=="1,5") example=plan;
+}
+if(shortest>121 || longest<179 || !new[]{"0,1,2,3","1,2,4","3,4","1,5"}.All(paths.Contains))
+    throw new Exception("Expected the full lifetime range and a mix of gradual climbs, high starts and skipped levels.");
+var scene=Game.ActiveScene;
+var specimen=scene.CreateObject(false);
+specimen.NetworkMode=NetworkMode.Never;
+const string tag="evolution_smoke_probe";
+specimen.Tags.Add(tag);
+var camera=scene.Camera;
+if(camera.IsValid()) camera.RenderExcludeTags.Add(tag);
+try
+{
+    var funnel=specimen.Components.Create<StormTornadoFunnel>();
+    typeof(StormTornadoFunnel).GetMethod("ConfigureEvolution",flags).Invoke(funnel,new[]{example});
+    specimen.Enabled=true;
+    await Task.Delay(120);
+    var originalBody=specimen.Children.Single(o=>o.Name=="Condensation Volume");
+    var render=originalBody.GetComponent<ModelRenderer>();
+    var age=typeof(StormTornadoFunnel).GetField("age",flags);
+    var animate=typeof(StormTornadoFunnel).GetMethod("Animate",flags);
+    var advance=typeof(StormTornadoFunnel).GetMethod("AdvanceEvolution",flags);
+    var second=((Array)stagesProperty.GetValue(example)).GetValue(1);
+    var at=(float)second.GetType().GetProperty("At").GetValue(second);
+    float Sample(float seconds)
+    {
+        age.SetValue(funnel,(TimeSince)seconds);
+        advance.Invoke(funnel,new object[]{seconds});
+        animate.Invoke(funnel,null);
+        return render.Attributes.GetVector4("VortexBounds",default).z;
+    }
+    var before=Sample(at-.01f);
+    if(funnel.Rating!=1) throw new Exception("Rating jumped before its scheduled time.");
+    var middle=Sample(at+1f);
+    if(funnel.Rating!=5 || !originalBody.IsValid() || middle<=before || middle>=5280)
+        throw new Exception($"The same vortex must grow toward F5 rather than be replaced or instantly resized: {before}, {middle}.");
+    var peak=Sample(at+4f);
+    if(peak<5279 || funnel.OpenCoreRadius<430) throw new Exception("The evolved funnel never reaches the F5 wedge preset.");
+    return new {Passed=true, Paths=paths.Count, Shortest=shortest, Longest=longest, Before=before, During=middle, Peak=peak};
+}
+finally
+{
+    specimen.Destroy();
+    if(camera.IsValid()) camera.RenderExcludeTags.Remove(tag);
+}

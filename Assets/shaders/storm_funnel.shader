@@ -58,6 +58,7 @@ PS
 	float3 VortexOrigin < Attribute( "VortexOrigin" ); >;
 	float2 VortexForward < Attribute( "VortexForward" ); >;
 	float4 VortexBounds < Attribute( "VortexBounds" ); >; // horizontal extent, full height, profile height, inner radius
+	float VortexWedge < Attribute( "VortexWedge" ); >; // weighted transition to the hollow F5
 	float4 VortexRadii < Attribute( "VortexRadii" ); >;
 	float4 VortexPhase < Attribute( "VortexPhase" ); >; // top radius, visible floor, opacity, animation time
 	float4 VortexAxisX < Attribute( "VortexAxisX" ); >;
@@ -103,13 +104,11 @@ PS
 		if ( edge < .002 ) return 0;
 		float radius = Curve( VortexRadii, VortexPhase.x, h );
 		// An elevated condensation tip tapers inward; it is not a slice through a solid tube.
-		if ( VortexBounds.w <= 0 )
-			radius *= 1 - .60 * smoothstep( 0, .24, VortexPhase.y ) * (1 - smoothstep( -.01, .21, h - VortexPhase.y ));
+		radius *= 1 - (1 - VortexWedge) * .60 * smoothstep( 0, .24, VortexPhase.y ) * (1 - smoothstep( -.01, .21, h - VortexPhase.y ));
 		float2 center = float2( Curve( VortexAxisX, VortexTop.x, h ), Curve( VortexAxisY, VortexTop.y, h ) );
 		float2 crossSection = (p.xy - center) / max( radius, 10 );
 		float radial = length( crossSection );
-		bool hollow = VortexBounds.w > 0;
-		if ( radial > (hollow ? 1.20 : 1.39) ) return 0;
+		if ( radial > lerp( 1.39, 1.20, VortexWedge ) ) return 0;
 		// Rotate continuously, but keep the twist between heights bounded. A persistent
 	// difference in spin rate would wind a multi-minute funnel into tight stripes.
 	float twist = 3.7 + 1.25 * sin( VortexPhase.w * .29 + .8 );
@@ -123,9 +122,9 @@ PS
 		float3 detail = VortexNoise.SampleLevel( VortexSampler, uv * float3( 1.62, 1.72, 1.20 ) + coarse.bgr * .12, 0 ).rgb;
 		float ridge = .55 * coarse.r + .28 * detail.g + .17 * detail.b;
 		float outer = 1 - smoothstep( .63, 1.11, radial - (ridge - .51) * .50 );
-		float inner = hollow ? smoothstep( VortexBounds.w, VortexBounds.w + radius * .23, radial * radius ) : 1;
+		float inner = lerp( 1, smoothstep( VortexBounds.w, VortexBounds.w + radius * .23, radial * radius ), VortexWedge );
 		// A broken veil softens the core without adding another layer of billboard smoke.
-		float veil = hollow ? 0 : (1 - smoothstep( .86, 1.36, radial )) * smoothstep( .35, .74, coarse.r * .7 + detail.g * .3 ) * .35;
+		float veil = (1 - VortexWedge) * (1 - smoothstep( .86, 1.36, radial )) * smoothstep( .35, .74, coarse.r * .7 + detail.g * .3 ) * .35;
 		float density = max( outer, veil ) * inner * edge * (.77 + .70 * ridge) * VortexPhase.z;
 		float sideLight = smoothstep( -.85, 1.0, dot( crossSection, float2( -.65, .76 ) ) );
 		float silver = smoothstep( .64, 1, radial ) * sideLight;
@@ -142,7 +141,7 @@ PS
 		if ( VortexBounds.w > 0 )
 		{
 			float eyeRadius = VortexBounds.w + 560 * saturate( .62 + q.z );
-			eye = smoothstep( eyeRadius, eyeRadius + 480, length( p.xy - VortexTop ) );
+			eye = lerp( 1, smoothstep( eyeRadius, eyeRadius + 480, length( p.xy - VortexTop ) ), VortexWedge );
 			if ( eye < .002 ) return 0;
 		}
 		float s, c;

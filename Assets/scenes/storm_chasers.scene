@@ -237,7 +237,6 @@
           "__guid": "3c32e64c-a23e-4c23-9dbe-a140b7cb9b04",
           "__enabled": true,
           "Flags": 0,
-          "Lifetime": 18,
           "OnComponentDestroy": null,
           "OnComponentDisabled": null,
           "OnComponentEnabled": null,

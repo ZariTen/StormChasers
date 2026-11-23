@@ -3,7 +3,7 @@ using System;
 /// <summary>Cosmetic ground marks persist across tornado replacements, then fade and return to a fixed pool.</summary>
 internal sealed class StormGroundScars : Component
 {
-	// Covers five minutes of the normal 78 units/sec drift, including the first mark of each tornado.
+	// Covers five minutes of normal drift, including the first mark of each tornado.
 	const int Capacity = 256;
 	const float FadeSeconds = 20f;
 	const float HoldSeconds = 300f - FadeSeconds;
@@ -35,7 +35,7 @@ internal sealed class StormGroundScars : Component
 		if ( heading.LengthSquared < .1f ) return;
 		tracked = tornado;
 		last = position;
-		var width = .83f + .35f * MathF.Sqrt( tornado.Profile.WidthScale );
+		var width = .83f + .35f * MathF.Sqrt( tornado.VisualProfile.WidthScale );
 		var offset = Vector3.Cross( Vector3.Up, heading ) * (46 * width * MathF.Sin( sequence * 1.91f ));
 		Stamp( position + offset, heading, tornado.Rating, width, time );
 	}

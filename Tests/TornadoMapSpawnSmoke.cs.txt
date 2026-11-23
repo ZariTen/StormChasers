@@ -1,24 +1,86 @@
 var scene=Game.ActiveScene;
 var spawner=scene.GetAllComponents<StormTornadoSpawner>().Single();
-var choose=typeof(StormTornadoSpawner).GetMethod("TryChooseSpawn",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic);
-if(choose is null) throw new Exception("The spawner still uses fixed markers rather than choosing terrain across the map.");
+var flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Public;
+var choose=typeof(StormTornadoSpawner).GetMethod("TryChooseSpawn",flags);
+var routeType=TypeLibrary.GetType("StormTornadoRoute")?.TargetType;
+if(routeType is null || choose?.GetParameters().Length!=3) throw new Exception("Tornadoes still follow one straight heading at a fixed speed.");
+var sample=routeType.GetMethod("Sample",flags);
 var random=new Random(48763);
 var quadrants=new System.Collections.Generic.HashSet<int>();
-var points=new System.Collections.Generic.HashSet<Vector3>();
-int nearEdge=0;
+var origins=new System.Collections.Generic.HashSet<Vector3>();
+int nearEdge=0, loops=0, fastTracks=0, fastLongTracks=0;
+float slowest=100, fastest=0;
+object fixtureRoute=null;
+Vector3 fixtureOrigin=default;
+(Vector3 Position, Rotation Rotation, float Speed) At(object route,float time) => ((Vector3,Rotation,float))sample.Invoke(route,new object[]{time});
 for(var i=0;i<220;i++)
 {
-    object[] args={random,Vector3.Zero,Rotation.Identity};
-    if(!(bool)choose.Invoke(spawner,args)) throw new Exception("No spawn on a map with plenty of valid ground.");
-    var point=(Vector3)args[1];
-    var heading=((Rotation)args[2]).Forward;
-    points.Add(point);
-    quadrants.Add((point.x>0?1:0)+(point.y>0?2:0));
-    if(MathF.Max(MathF.Abs(point.x),MathF.Abs(point.y))>5100) nearEdge++;
-    var pathEnd=point+heading*spawner.Lifetime*78;
-    var trace=scene.Trace.Ray(point+Vector3.Up*4,point+Vector3.Down*6).WithoutTags("player").Run();
-    if(!trace.Hit || (trace.GameObject.Name!="Flat Terrain"&&!trace.GameObject.Tags.Has("storm_road")) || MathF.Max(MathF.Abs(pathEnd.x),MathF.Abs(pathEnd.y))>6250)
-        throw new Exception($"Invalid spawn {point} on {trace.GameObject?.Name} or track leaves the playfield at {pathEnd}.");
+    var life=i%2==0 ? 120f : 180f;
+    object[] args={random,life,null};
+    if(!(bool)choose.Invoke(spawner,args)) throw new Exception("No route on a map with plenty of valid ground.");
+    var route=args[2];
+    var start=At(route,0).Position;
+    var trace=scene.Trace.Ray(start+Vector3.Up*4,start+Vector3.Down*6).WithoutTags("player").Run();
+    if(!trace.Hit || (trace.GameObject.Name!="Flat Terrain" && !trace.GameObject.Tags.Has("storm_road")))
+        throw new Exception($"Invalid route origin: {start}.");
+    origins.Add(start);
+    quadrants.Add((start.x>0?1:0)+(start.y>0?2:0));
+    if(MathF.Max(MathF.Abs(start.x),MathF.Abs(start.y))>5100) nearEdge++;
+    var minimum=100f;
+    var maximum=0f;
+    var last=At(route,0);
+    var length=0f;
+    var headingChange=0f;
+    var visits=new System.Collections.Generic.List<(Vector3 Position,float HeadingTurn)>();
+    var loop=false;
+    for(var t=0f;t<=life;t+=.5f)
+    {
+        var point=At(route,t);
+        var step=point.Position-last.Position;
+        if(MathF.Max(MathF.Abs(point.Position.x),MathF.Abs(point.Position.y))>6243 || point.Speed<24 || point.Speed>91 || MathF.Abs(point.Speed-last.Speed)>4)
+            throw new Exception($"Route left the map or abruptly changed speed at {t}s: {point}.");
+        var alignment=Vector3.Dot(point.Rotation.Forward,last.Rotation.Forward);
+        if(t>0 && (step.Length<10 || step.Length>46 || alignment<.97f || Vector3.Dot(step.Normal,point.Rotation.Forward)<.97f))
+            throw new Exception($"Route teleported, turned too sharply, or pointed away from its path at {t}s.");
+        headingChange+=MathF.Acos(Math.Clamp(alignment,-1,1));
+        length+=step.Length;
+        if(!loop && visits.Count>40 && visits.Take(visits.Count-40).Any(p=>(p.Position-point.Position).Length<35 && headingChange-p.HeadingTurn>5.7f)) loop=true;
+        visits.Add((point.Position,headingChange));
+        minimum=MathF.Min(minimum,point.Speed);
+        maximum=MathF.Max(maximum,point.Speed);
+        last=point;
+    }
+    if(maximum-minimum<15 || length-(last.Position-start).Length<180)
+        throw new Exception("A full route should change speed substantially and bend away from a straight line.");
+    if(loop) loops++;
+    if(maximum>=72) {fastTracks++; if(life==180f) fastLongTracks++;}
+    slowest=MathF.Min(slowest,minimum);
+    fastest=MathF.Max(fastest,maximum);
+    if(fixtureRoute is null && maximum>=80) {fixtureRoute=route; fixtureOrigin=start;}
 }
-if(quadrants.Count!=4 || points.Count<210 || nearEdge<25) throw new Exception("Spawns are not spread across the entire playable map.");
-return new {Passed=true, Unique=points.Count, Quadrants=quadrants.Count, NearEdge=nearEdge};
+if(quadrants.Count!=4 || origins.Count<210 || nearEdge<25 || loops<20 || loops>205 || fastTracks<30 || fastLongTracks<5 || fixtureRoute is null)
+    throw new Exception($"Expected varied origins, optional loops and fast tracks; got {quadrants.Count} quadrants, {nearEdge} near edge, {loops} loops, {fastTracks} fast tracks.");
+if(!Networking.IsHost) throw new Exception("Run route smoke on the host to exercise authoritative motion.");
+const string tag="tornado_route_smoke_probe";
+var camera=scene.Camera;
+var specimen=scene.CreateObject(false);
+specimen.NetworkMode=NetworkMode.Never;
+specimen.Tags.Add(tag);
+if(camera.IsValid()) camera.RenderExcludeTags.Add(tag);
+try
+{
+    var funnel=specimen.Components.Create<StormTornadoFunnel>();
+    typeof(StormTornadoFunnel).GetMethod("ConfigureRoute",flags).Invoke(funnel,new[]{fixtureRoute});
+    specimen.Enabled=true;
+    await Task.Delay(650);
+    var seconds=(float)(TimeSince)typeof(StormTornadoFunnel).GetField("age",flags).GetValue(funnel);
+    var expected=At(fixtureRoute,seconds);
+    if((specimen.WorldPosition-fixtureOrigin).Length<12 || (specimen.WorldPosition-expected.Position).Length>8 || Vector3.Dot(specimen.WorldRotation.Forward,expected.Rotation.Forward)<.98f || MathF.Abs(funnel.DriftSpeed-expected.Speed)>1)
+        throw new Exception("The live funnel must follow the planned position, heading and speed.");
+    return new {Passed=true, Routes=origins.Count, Quadrants=quadrants.Count, NearEdge=nearEdge, LoopingRoutes=loops, FastRoutes=fastTracks, FastLongTracks=fastLongTracks, Slowest=slowest, Fastest=fastest, LiveTravel=(specimen.WorldPosition-fixtureOrigin).Length};
+}
+finally
+{
+    specimen.Destroy();
+    if(camera.IsValid()) camera.RenderExcludeTags.Remove(tag);
+}

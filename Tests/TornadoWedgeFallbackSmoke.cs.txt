@@ -1,0 +1,42 @@
+var scene = Game.ActiveScene;
+var specimen = scene.CreateObject(false);
+const string tag = "wedge_fallback_probe";
+specimen.NetworkMode = NetworkMode.Never;
+specimen.Tags.Add(tag);
+var camera = scene.Camera;
+if (camera.IsValid()) camera.RenderExcludeTags.Add(tag);
+try
+{
+    var funnel = specimen.Components.Create<StormTornadoFunnel>();
+    funnel.Rating = 5;
+    specimen.Enabled = true;
+    await Task.Delay(120);
+    var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+    var t = typeof(StormTornadoFunnel);
+    var vapor = (SpriteRenderer[])t.GetField("vapor", flags).GetValue(funnel);
+    if (vapor[0] is null)
+        t.GetMethod("CreateSmokeLayer", flags).Invoke(funnel, new object[] { "Test F5 Sprite Wall", vapor, 27f, 22f });
+    var clouds = (SpriteRenderer[])t.GetField("clouds", flags).GetValue(funnel);
+    if (clouds[0] is null)
+        t.GetMethod("CreateSmokeLayer", flags).Invoke(funnel, new object[] { "Test F5 Sprite Clouds", clouds, 110f, 80f });
+    t.GetField("volume", flags).SetValue(funnel, null);
+    var age = t.GetField("age", flags);
+    var animate = t.GetMethod("Animate", flags);
+    int VisibleLow(float seconds)
+    {
+        age.SetValue(funnel, (TimeSince)seconds);
+        animate.Invoke(funnel, null);
+        return vapor.Count(r => r.LocalPosition.z < funnel.Profile.FunnelHeight * .1f && r.Color.a > .1f);
+    }
+    var forming = VisibleLow(1.4f);
+    var mature = VisibleLow(9f);
+    var fading = VisibleLow(16.5f);
+    if (forming != 0 || mature < 5 || fading != 0)
+        throw new Exception($"F5 fallback should only condense near the ground when mature: forming={forming}, mature={mature}, fading={fading}.");
+    return new { Passed = true, Forming = forming, Mature = mature, Fading = fading };
+}
+finally
+{
+    specimen.Destroy();
+    if (camera.IsValid()) camera.RenderExcludeTags.Remove(tag);
+}

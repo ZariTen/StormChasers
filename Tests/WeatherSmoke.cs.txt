@@ -41,8 +41,8 @@ var peakFog = fog.MaximumOpacity;
 if (distantRain<1.50f || peakRain<=distantRain+.25f || peakFog<.37f)
     throw new Exception($"An active storm must strengthen rain at all four corners and thicken map-wide fog: rain {distantRain:F2}, fog {peakFog:F2}.");
 if ((center-Storm().WorldPosition).Length>30 || peakHaze<.55f
-    || front.All(r=>r.Color.a<.2f) || front.Any(r=>r.WorldPosition.z<2900 || r.WorldPosition.z>6500))
-    throw new Exception("The strongest haze and the low shelf must follow the tornado.");
+    || front[0].Enabled || front.Skip(1).Any(r=>!r.Enabled || r.Color.a<.2f || r.WorldPosition.z<7500))
+    throw new Exception("The rain haze must follow the tornado; distant bands must stay above the integrated wall cloud and the low card must be disabled.");
 if (front.Count(r=>r.Size.x>=24000 && r.Size.y>=18000 && r.Color.a>.35f)<2)
     throw new Exception("Two active cloud bands must extend across the map beyond the low shelf.");
 if (deck[0].Color.g>.22f || front[0].Color.g>.20f || front[0].Color.g>=front[2].Color.g)
@@ -61,8 +61,8 @@ rain.Invoke(weather,new object[]{far,distantRain,1.75f});
 var distantStreaks = drops.Count(r=>r.Enabled && r.Color.a>.045f);
 rain.Invoke(weather,new object[]{open,peakRain,1.75f});
 var visible = drops.Where(r=>r.Enabled && r.Color.a>.035f).ToArray();
-if (distantStreaks<600 || visible.Length<distantStreaks+100 || visible.Count(r=>r.Size.x>=1.3f && r.Color.a>.12f)<120
-    || visible.Any(r=>r.Size.x>2.2f || r.Size.y>56 || r.Color.a>.69f || r.WorldPosition.z<2))
+if (distantStreaks<325 || visible.Length<distantStreaks+65 || visible.Count(r=>r.Size.x>=1.3f && r.Color.a>.12f)<90
+    || visible.Any(r=>r.Size.x>3.05f || r.Size.y>28 || r.Color.a>.351f || r.WorldPosition.z<7))
     throw new Exception($"Expected a visible downpour far from the funnel, with an even denser inner band: {distantStreaks} distant, {visible.Length} near.");
 var probe = visible[0];
 var start=probe.WorldPosition;

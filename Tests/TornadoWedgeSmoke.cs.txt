@@ -13,24 +13,22 @@ try
     funnel.Rating=5;
     test.Enabled=true;
     await Task.Delay(500);
-    var renderers=test.Children.Single(o=>o.Name=="Condensation Funnel").Children.Select(o=>o.GetComponent<SpriteRenderer>()).ToArray();
-    var low=renderers.Where(r=>r.LocalPosition.z>=120 && r.LocalPosition.z<=1200).ToArray();
-    if(low.Length<22) throw new Exception("Expected a dense wall near the ground.");
-    float Distance(SpriteRenderer r)=>r.LocalPosition.WithZ(0).Length;
-    var clearance=low.Min(r=>Distance(r)-r.Size.x*.4f);
-    if(clearance<380 || low.Average(Distance)<1050 || low.Count(r=>Distance(r)>900)<low.Length*.9f)
-        throw new Exception($"F5 needs a walk-in hollow core and a much broader wall, got {clearance:F0} units clear.");
-    var sectors=low.Select(r=>MathF.Atan2(r.LocalPosition.y,r.LocalPosition.x)).Select(a=>(int)((a+MathF.PI)/MathF.Tau*8)).Distinct().Count();
-    if(sectors<8 || renderers.Any(r=>r.GameObject.GetComponent<Collider>().IsValid()))
-        throw new Exception("The wall should surround the hollow eye, with no blocking collision.");
-    var crown=test.Children.SingleOrDefault(o=>o.Name=="Eye Crown")?.GetComponent<SpriteRenderer>();
-    if (crown is not { Billboard:SpriteRenderer.BillboardMode.None, Texture.IsValid:true } || crown.LocalPosition.z<4900)
-        throw new Exception("The F5 needs a separate rotating cloud crown around the overhead opening.");
+    var body=test.Children.Single(o=>o.Name=="Condensation Volume").GetComponent<ModelRenderer>();
+    var bound=body.Attributes.GetVector4("VortexBounds",default);
+    var radii=body.Attributes.GetVector4("VortexRadii",default);
+    var clearance=bound.w;
+    if(clearance<430 || radii.x<1400 || radii.x-clearance<850 || radii.y<=radii.x || body.Bounds.Maxs.z<5000)
+        throw new Exception($"F5 needs a walk-in hollow core and a much broader wall, got {clearance:F0} units clear and a {radii.x:F0} ground radius.");
+    if(test.Components.GetAll<Collider>(FindMode.EverythingInSelfAndDescendants).Any())
+        throw new Exception("Hollow eye tested with unexpected blocking collision.");
+    var crown=body.Attributes.GetVector4("StormCloudBounds",default);
+    if (crown.x<3100 || crown.z<740 || test.Children.Any(o=>o.Name=="Eye Crown"))
+        throw new Exception("The F5 crown should be integrated into the same volume, without an overhead card.");
     var weather=scene.GetAllComponents<StormWeather>().Single();
     var deck=weather.GameObject.Children.Single(o=>o.Name=="Overcast Deck").Children.Select(o=>o.GetComponent<SpriteRenderer>()).ToArray();
     if(deck.Count(r=>r.Size.x>=40000 && r.Size.y>=30000)<2 || deck.Max(r=>r.WorldPosition.z)-deck.Min(r=>r.WorldPosition.z)<1200)
         throw new Exception("Persistent cloud strata should extend far beyond the tornado and have distinct heights.");
-    return new{Passed=true,Clearance=clearance,AverageWallRadius=low.Average(Distance),Sectors=sectors,DeckSpan=deck.Max(r=>r.Size.x)};
+    return new{Passed=true,Clearance=clearance,GroundRadius=radii.x,DeckSpan=deck.Max(r=>r.Size.x)};
 }
 finally
 {

@@ -1,0 +1,38 @@
+var scene = Game.ActiveScene;
+var weather = scene.GetAllComponents<StormWeather>().Single();
+var specimen = scene.CreateObject(false);
+const string tag="storm_structure_probe";
+specimen.NetworkMode=NetworkMode.Never;
+specimen.Tags.Add(tag);
+specimen.WorldRotation=Rotation.FromYaw(90);
+var camera=scene.Camera;
+if(camera.IsValid()) camera.RenderExcludeTags.Add(tag);
+var flags=System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+var target=typeof(StormWeather).GetField("tornado",flags);
+var previous=target.GetValue(weather);
+try
+{
+    var funnel=specimen.Components.Create<StormTornadoFunnel>();
+    funnel.Rating=2;
+    specimen.Enabled=true;
+    target.SetValue(weather,funnel);
+    for (var i=0; i<50 && (weather.StormStrength<.65f || specimen.Children.Count==0); i++) await Task.Delay(100);
+    if (weather.StormStrength<.65f) throw new Exception("The preview cell failed to build up.");
+    var curtain=(specimen.WorldRotation.Forward*.65f + specimen.WorldRotation.Right*.76f).Normal;
+    var center=weather.StormCenter;
+    var rainy=weather.PrecipitationAt(center+curtain*2600);
+    var clearer=weather.PrecipitationAt(center-curtain*2600);
+    var body=specimen.Children.Single(o=>o.Name=="Condensation Volume").GetComponent<ModelRenderer>();
+    var cap=body.Attributes.GetVector4("StormCloudBounds",default);
+    var capCenter=body.Attributes.GetVector("StormCloudCenter",default);
+    var descent=funnel.Profile.FunnelHeight-capCenter.z+cap.z;
+    if (rainy-clearer<.13f || descent<405)
+        throw new Exception($"The wall cloud should lower locally and rain should concentrate on one flank: rainy={rainy:F2}, clearer={clearer:F2}, lowering={descent:F0}.");
+    return new {Passed=true, Rainy=rainy, Clearer=clearer, Lowering=descent};
+}
+finally
+{
+    if (ReferenceEquals(target.GetValue(weather),specimen.GetComponent<StormTornadoFunnel>())) target.SetValue(weather,previous);
+    specimen.Destroy();
+    if(camera.IsValid()) camera.RenderExcludeTags.Remove(tag);
+}

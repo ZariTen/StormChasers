@@ -1,0 +1,61 @@
+var scene=Game.ActiveScene;
+var test=scene.CreateObject(false);
+const string tag="silhouette_probe";
+test.NetworkMode=NetworkMode.Never;
+test.Tags.Add(tag);
+test.WorldPosition=new Vector3(-4700,4400,0);
+var camera=scene.Camera;
+if(camera.IsValid()) camera.RenderExcludeTags.Add(tag);
+try
+{
+    var funnel=test.Components.Create<StormTornadoFunnel>();
+    funnel.Rating=2;
+    funnel.ShapeRoll=.1f;
+    test.Enabled=true;
+    await Task.Delay(180);
+    var shape=typeof(StormTornadoFunnel).GetProperty("Silhouette");
+    var body=test.Children.SingleOrDefault(x=>x.Name=="Condensation Volume");
+    if(shape is null || !body.IsValid()) throw new Exception("Condensation is still disconnected smoke sprites; expected one continuous volume with selectable silhouettes.");
+    var model=body.GetComponent<ModelRenderer>();
+    if(model is not {Enabled:true, Model.IsError:false} || model.MaterialOverride?.Shader?.ResourcePath.Contains("storm_funnel")!=true)
+        throw new Exception("The continuous condensation volume did not bind its shader.");
+    if(test.Children.Any(x=>x.Name=="Condensation Funnel"))
+        throw new Exception("The sprite fallback should not overlap the volume.");
+    var names=new[]{"Cone","VShape","Cylinder","Hourglass","Rope","Wedge"};
+    var rolls=new[]{.1f,.34f,.52f,.66f,.80f,.95f};
+    var flags=System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance;
+    var animate=typeof(StormTornadoFunnel).GetMethod("Animate",flags);
+    typeof(StormTornadoFunnel).GetField("age",flags).SetValue(funnel,(TimeSince)9f);
+    for(var i=0;i<rolls.Length;i++)
+    {
+        funnel.ShapeRoll=rolls[i];
+        if(shape.GetValue(funnel)?.ToString()!=names[i]) throw new Exception($"Expected {names[i]} at the same rating and size.");
+        animate.Invoke(funnel,null);
+        var r=model.Attributes.GetVector4("VortexRadii",default);
+        var top=model.Attributes.GetVector4("VortexPhase",default).x;
+        var axis=model.Attributes.GetVector4("VortexAxisY",default);
+        bool matches = names[i] switch
+        {
+            "Cone" => top > 4*r.x && r.z < .44f*top,
+            "VShape" => top > 6*r.x && r.z > .48f*top,
+            "Cylinder" => MathF.Abs(r.x-r.y) < .12f*r.x && r.z < r.x*1.32f && top > 1.75f*r.z,
+            "Hourglass" => r.x > r.z*1.8f && top > r.z*2.6f,
+            "Rope" => r.z < 165 && MathF.Abs(axis.y-axis.w)>500,
+            "Wedge" => r.x > 400 && r.x > top*.49f,
+            _ => false
+        };
+        if(!matches) throw new Exception($"{names[i]} did not upload the expected contour: {r} -> {top}, axis {axis}.");
+    }
+    funnel.Rating=5;
+    funnel.ShapeRoll=.1f;
+    if(shape.GetValue(funnel)?.ToString()!="Wedge" || funnel.OpenCoreRadius<=0)
+        throw new Exception("The F5 should retain its walk-in wedge.");
+    if(test.Components.GetAll<Collider>(FindMode.EverythingInSelfAndDescendants).Any())
+        throw new Exception("Visual condensation must not create collision.");
+    return new {Passed=true, Silhouettes=names, Shader=model.MaterialOverride.Shader.ResourcePath};
+}
+finally
+{
+    test.Destroy();
+    if(camera.IsValid()) camera.RenderExcludeTags.Remove(tag);
+}

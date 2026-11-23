@@ -1,6 +1,7 @@
 var scene = Game.ActiveScene;
 GameObject[] Funnels() => scene.GetAllObjects(true).Where(x => x.Name == "Tornado" && x.Tags.Has("storm_tornado")).ToArray();
 GameObject[] Layer(GameObject tornado, string name) => tornado.Children.SingleOrDefault(x => x.Name == name)?.Children.ToArray() ?? Array.Empty<GameObject>();
+ModelRenderer Body(GameObject tornado) => tornado.Children.SingleOrDefault(x => x.Name == "Condensation Volume")?.GetComponent<ModelRenderer>();
 var markers = scene.GetAllComponents<StormTornadoSpawner>().Single().GameObject.Children;
 var deadline = DateTime.UtcNow.AddSeconds(23);
 GameObject tornado = null;
@@ -10,39 +11,40 @@ while (DateTime.UtcNow < deadline)
     if (live.Length > 1) throw new Exception("More than one tornado was spawned.");
     var candidate = live.SingleOrDefault();
     if (candidate.IsValid() && markers.Any(m => (m.WorldPosition - candidate.WorldPosition).Length < 400)
-        && Layer(candidate, "Condensation Funnel").Length >= 60 && Layer(candidate, "Ground Dust").Length >= 16)
+        && Body(candidate).IsValid() && Layer(candidate, "Ground Dust").Length >= 16)
     {
         tornado = candidate;
         break;
     }
     await Task.Delay(100);
 }
-if (!tornado.IsValid()) throw new Exception("Expected a continuous smoke funnel and separate ground dust layer.");
-var funnel = Layer(tornado, "Condensation Funnel");
-var clouds = Layer(tornado, "Storm Cloud Base");
+if (!tornado.IsValid()) throw new Exception("Expected a continuous condensation volume and separate ground dust layer.");
+var body = Body(tornado);
+var cloudBounds = body.Attributes.GetVector4("StormCloudBounds",default);
 var dust = Layer(tornado, "Ground Dust");
 var debris = Layer(tornado, "Airborne Debris");
 var effect = tornado.GetComponent<StormTornadoFunnel>();
 var height = effect.Profile.FunnelHeight;
 var rating = effect.Rating;
-if (rating is < 0 or > 5 || funnel.Max(x => x.LocalPosition.z) < height * .94f || dust.Max(x => x.LocalPosition.z) > 170)
+if (rating is < 0 or > 5 || body.Bounds.Maxs.z < height || dust.Max(x => x.LocalPosition.z) > 170 || body.Model.IsError)
     throw new Exception("The funnel should reach the sky while ground dust stays low.");
-if (clouds.Length < 40 || clouds.Min(x => x.LocalPosition.z) > height - 100 || clouds.Max(x => x.LocalPosition.z) < height + 300
-    || clouds.Max(x => x.LocalPosition.x) - clouds.Min(x => x.LocalPosition.x) < 3000)
+if (cloudBounds.x < 1450 || cloudBounds.z < 420 || body.Bounds.Maxs.z < height + 550)
     throw new Exception("A broad storm cloud base should overlap the top of the funnel.");
-if (funnel.Concat(dust).Concat(clouds).Any(x => x.GetComponent<SpriteRenderer>() is not { Opaque: false, IsSorted: true, AlphaCutoff: < 0.03f, Texture.IsValid: true }))
-    throw new Exception("Funnel, clouds and dust should use valid translucent sprites.");
+if (dust.Any(x => x.GetComponent<SpriteRenderer>() is not { Opaque: false, IsSorted: true, AlphaCutoff: < 0.03f, Texture.IsValid: true }))
+    throw new Exception("Ground dust should use valid translucent sprites.");
 if (debris.Length < 8 || debris.Any(x => x.GetComponent<ModelRenderer>()?.Model is not { IsError: false } || x.GetComponent<Collider>().IsValid()))
     throw new Exception("Expected visual debris and no debris collision.");
 var start = tornado.WorldPosition;
-var firstPuff = funnel[0];
+var firstPuff = dust[0];
 var puffStart = firstPuff.LocalPosition;
-var cloud = clouds[0];
-var cloudStart = cloud.LocalPosition;
+var phase = body.Attributes.GetVector4("VortexPhase",default).w;
 await Task.Delay(650);
 if ((tornado.WorldPosition - start).Length < 2 || (firstPuff.LocalPosition - puffStart).Length < 2
-    || (cloud.LocalPosition - cloudStart).Length < 2)
+    || body.Attributes.GetVector4("VortexPhase",default).w <= phase + .2f)
     throw new Exception("The tornado should drift while its smoke and clouds move independently.");
+var ageSample = effect.GetType().GetProperty("ElapsedSample");
+if (!tornado.Network.Active || ageSample?.GetValue(effect) is not float elapsed || elapsed < .45f || elapsed > effect.Lifetime)
+    throw new Exception("An active vortex should publish a recent lifecycle age so new clients do not replay its formation.");
 var trace = scene.Trace.Ray(tornado.WorldPosition + Vector3.Up * 64, tornado.WorldPosition + Vector3.Down * 128).Run();
 if (!trace.Hit || (trace.GameObject?.Name != "Flat Terrain" && trace.GameObject?.Tags.Has("storm_road") != true))
     throw new Exception("Tornado drifted away from the map surface.");
@@ -52,11 +54,11 @@ for (var i = 0; i < 300 && Funnels().All(x => x.Id == tornado.Id); i++)
     if (Funnels().Length > 1) throw new Exception("More than one tornado was spawned.");
 }
 var next = Funnels();
-if (tornado.IsValid() || next.Length != 1 || next[0].Id == tornado.Id
-    || funnel.Concat(dust).Concat(clouds).Concat(debris).Any(o => o.IsValid()))
+if (tornado.IsValid() || next.Length != 1 || next[0].Id == tornado.Id || body.IsValid()
+    || dust.Concat(debris).Any(o => o.IsValid()))
     throw new Exception("The old tornado and its visual children were not replaced cleanly.");
-for (var i = 0; i < 30 && Layer(next[0], "Storm Cloud Base").Length == 0; i++) await Task.Delay(100);
-if (Layer(next[0], "Storm Cloud Base").Length != clouds.Length || Layer(next[0], "Condensation Funnel").Length != funnel.Length
+for (var i = 0; i < 30 && !Body(next[0]).IsValid(); i++) await Task.Delay(100);
+if (!Body(next[0]).IsValid() || Body(next[0]).Attributes.GetVector4("StormCloudBounds",default).x < 1450
     || Layer(next[0], "Ground Dust").Length != dust.Length || Layer(next[0], "Airborne Debris").Length != debris.Length)
     throw new Exception("The replacement tornado is missing visual layers.");
-return new { Passed = true, Rating = $"F{rating}", FunnelHeight = height, FunnelSprites = funnel.Length, CloudSprites = clouds.Length, GroundDustSprites = dust.Length, Debris = debris.Length, Ground = trace.GameObject.Name };
+return new { Passed = true, Rating = $"F{rating}", FunnelHeight = height, CloudRadius = cloudBounds.x, GroundDustSprites = dust.Length, Debris = debris.Length, Ground = trace.GameObject.Name };

@@ -1,0 +1,110 @@
+var scene=Game.ActiveScene;
+const string tag="volume_render_probe";
+var main=scene.Camera;
+var weather=scene.GetAllComponents<StormWeather>().Single().GameObject;
+const string weatherTag="volume_test_hide_weather";
+GameObject Local(string name,bool enabled=true)
+{
+    var obj=scene.CreateObject(enabled);
+    obj.Name=name;
+    obj.NetworkMode=NetworkMode.Never;
+    obj.Tags.Add(tag);
+    return obj;
+}
+var specimen=Local("Volume-only render specimen",false);
+var rig=Local("Volume verification camera");
+var block=Local("Depth verification occluder",false);
+var background=Local("Volume contrast target",false);
+if(main.IsValid()) main.RenderExcludeTags.Add(tag);
+weather.Tags.Add(weatherTag);
+try
+{
+    var camera=rig.Components.Create<CameraComponent>();
+    camera.IsMainCamera=false;
+    camera.FieldOfView=55;
+    camera.ZFar=100000;
+    foreach(var t in new[]{"storm_tornado","player","viewmodel",weatherTag}) camera.RenderExcludeTags.Add(t);
+    var funnel=specimen.Components.Create<StormTornadoFunnel>();
+    funnel.Rating=2;
+    funnel.ShapeRoll=.52f;
+    var center=new Vector3(300,4250,0);
+    specimen.WorldPosition=center;
+    specimen.Enabled=true;
+    await Task.Delay(120);
+    var body=specimen.Children.Single(o=>o.Name=="Condensation Volume").GetComponent<ModelRenderer>();
+    foreach(var child in specimen.Children.Where(x=>x!=body.GameObject)) child.Enabled=false;
+    var flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
+    var age=typeof(StormTornadoFunnel).GetField("age",flags);
+    var animate=typeof(StormTornadoFunnel).GetMethod("Animate",flags);
+    void Mature()
+    {
+        specimen.WorldPosition=center;
+        age.SetValue(funnel,(TimeSince)9f);
+        animate.Invoke(funnel,null);
+    }
+    const int width=360,height=260;
+    async Task<Color[]> Frame(bool visible)
+    {
+        Mature();
+        body.Enabled=visible;
+        await Task.Delay(65);
+        using var image=new Bitmap(width,height);
+        camera.RenderToBitmap(image);
+        return image.GetPixels();
+    }
+    int Changed(Color[] a, Color[] b)
+    {
+        var changed=0;
+        for(var y=height/2-9;y<=height/2+9;y++)
+        for(var x=width/2-9;x<=width/2+9;x++)
+        {
+            var i=y*width+x;
+            var d=a[i]-b[i];
+            if(MathF.Abs(d.r)+MathF.Abs(d.g)+MathF.Abs(d.b)>.06f) changed++;
+        }
+        return changed;
+    }
+    var focus=center+Vector3.Up*1650;
+    rig.WorldPosition=focus-Vector3.Forward*2000;
+    rig.WorldRotation=Rotation.LookAt(Vector3.Forward,Vector3.Up);
+    background.WorldPosition=focus+Vector3.Forward*1800;
+    background.WorldScale=new Vector3(3,54,54);
+    var backdrop=background.Components.Create<ModelRenderer>();
+    backdrop.Model=Model.Load("models/dev/box.vmdl");
+    backdrop.MaterialOverride=Material.FromShader(Shader.Load("shaders/storm_debris.shader"));
+    backdrop.Attributes.Set("FragmentColor",new Vector3(.73f,.66f,.55f));
+    background.Enabled=true;
+    var exterior=Changed(await Frame(false),await Frame(true));
+    var cloudFocus=center+new Vector3(0,850,funnel.Profile.FunnelHeight+450);
+    rig.WorldPosition=cloudFocus-Vector3.Forward*2600;
+    background.WorldPosition=cloudFocus+Vector3.Forward*3200;
+    var wallCloud=Changed(await Frame(false),await Frame(true));
+    rig.WorldPosition=focus-Vector3.Forward*2000;
+    background.WorldPosition=focus+Vector3.Forward*1800;
+    block.WorldPosition=focus-Vector3.Forward*950;
+    block.WorldScale=new Vector3(3,18,18);
+    var renderer=block.Components.Create<ModelRenderer>();
+    renderer.Model=Model.Load("models/dev/box.vmdl");
+    block.Enabled=true;
+    var occluded=Changed(await Frame(false),await Frame(true));
+    block.Enabled=false;
+    background.Enabled=false;
+    funnel.Rating=5;
+    rig.WorldPosition=center+Vector3.Up*450;
+    rig.WorldRotation=Rotation.LookAt(Vector3.Forward,Vector3.Up);
+    var insideWall=Changed(await Frame(false),await Frame(true));
+    rig.WorldRotation=Rotation.LookAt(Vector3.Up,Vector3.Forward);
+    var clearAbove=Changed(await Frame(false),await Frame(true));
+    if(exterior<125 || wallCloud<125 || occluded>5 || insideWall<125 || clearAbove>5)
+        throw new Exception($"Expected visible depth-clipped condensation, an interior wall and clear overhead core: exterior={exterior}, cloud={wallCloud}, occluded={occluded}, inside={insideWall}, overhead={clearAbove}.");
+    return new {Passed=true, ExteriorPixels=exterior, WallCloudPixels=wallCloud, OccludedPixels=occluded, InteriorWallPixels=insideWall, OverheadCorePixels=clearAbove};
+}
+finally
+{
+    block.Destroy();
+    background.Destroy();
+    specimen.Destroy();
+    rig.Destroy();
+    weather.Tags.Remove(weatherTag);
+    if(main.IsValid()) main.RenderExcludeTags.Remove(tag);
+}

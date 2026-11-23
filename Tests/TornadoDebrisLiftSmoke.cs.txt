@@ -1,0 +1,53 @@
+var scene=Game.ActiveScene;
+const string tag="lofted_debris_probe";
+var specimen=scene.CreateObject(false);
+specimen.Name="Lofted debris verification";
+specimen.NetworkMode=NetworkMode.Never;
+specimen.Tags.Add(tag);
+specimen.WorldPosition=new Vector3(-4700,4400,0);
+var main=scene.Camera;
+if(main.IsValid()) main.RenderExcludeTags.Add(tag);
+try
+{
+    var funnel=specimen.Components.Create<StormTornadoFunnel>();
+    funnel.Rating=2;
+    funnel.ShapeRoll=.10f;
+    specimen.Enabled=true;
+    await Task.Delay(170);
+    var flags=System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance;
+    var animate=typeof(StormTornadoFunnel).GetMethod("Animate",flags);
+    var age=typeof(StormTornadoFunnel).GetField("age",flags);
+    var pieces=specimen.Children.Single(o=>o.Name=="Airborne Debris").Children.ToArray();
+    void At(float seconds)
+    {
+        age.SetValue(funnel,(TimeSince)seconds);
+        animate.Invoke(funnel,null);
+    }
+    bool Visible(GameObject o)=>o.LocalScale.Length>.045f;
+    At(9f);
+    var height=funnel.Profile.FunnelHeight;
+    var active=pieces.Where(Visible).ToArray();
+    var upper=active.Where(o=>o.LocalPosition.z>height*.50f).ToArray();
+    var low=active.Count(o=>o.LocalPosition.z<height*.18f);
+    if(upper.Length<10 || low<18 || active.Max(o=>o.LocalPosition.z)<height*.73f)
+        throw new Exception($"Debris should be dense near the surface with visible pieces spiraling high up: low={low}, upper={upper.Length}, highest={active.Max(o=>o.LocalPosition.z)/height:F2} of funnel height.");
+    if(upper.Count(o=>o.LocalPosition.WithZ(0).Length>360)<8)
+        throw new Exception("Lofted fragments must fan out beyond the condensation, not vanish inside it.");
+    var models=active.Select(o=>o.GetComponent<ModelRenderer>().Model).Distinct().Count();
+    if(models<3 || pieces.Any(o=>o.GetComponent<Collider>().IsValid()))
+        throw new Exception("Expected varied physical silhouettes, but no collision or damage.");
+    var before=upper.Select(o=>o.LocalPosition).ToArray();
+    At(9.22f);
+    var rising=upper.Where((o,i)=>Visible(o)&&o.LocalPosition.z-before[i].z>20 && (o.LocalPosition-before[i]).WithZ(0).Length>20).Count();
+    if(rising<5) throw new Exception($"Upper fragments should spiral upward, not hover in place: rising={rising}.");
+    funnel.Rating=5;
+    At(9f);
+    if(pieces.Where(Visible).Any(o=>o.LocalPosition.z<600 && o.LocalPosition.WithZ(0).Length<funnel.OpenCoreRadius+70))
+        throw new Exception("The F5 should keep its near-ground opening free of airborne debris.");
+    return new {Passed=true, Active=active.Length, Lower=low, Upper=upper.Length, Rising=rising, MeshVariants=models};
+}
+finally
+{
+    specimen.Destroy();
+    if(main.IsValid()) main.RenderExcludeTags.Remove(tag);
+}

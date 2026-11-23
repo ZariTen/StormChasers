@@ -1,0 +1,48 @@
+var scene = Game.ActiveScene;
+var specimen = scene.CreateObject(false);
+const string tag = "lifecycle_smoke_probe";
+specimen.Name = "Tornado lifecycle verification";
+specimen.NetworkMode = NetworkMode.Never;
+specimen.Tags.Add(tag);
+specimen.WorldPosition = new Vector3(-5000, 4900, 0);
+var camera = scene.Camera;
+if (camera.IsValid()) camera.RenderExcludeTags.Add(tag);
+try
+{
+    var funnel = specimen.Components.Create<StormTornadoFunnel>();
+    funnel.Rating = 2;
+    specimen.Enabled = true;
+    await Task.Delay(100);
+    SpriteRenderer[] Layer(string name) => specimen.Children.Single(o => o.Name == name).Children
+        .Select(o => o.GetComponent<SpriteRenderer>()).ToArray();
+    var dust = Layer("Ground Dust");
+    var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+    var animate = typeof(StormTornadoFunnel).GetMethod("Animate", flags);
+    var age = typeof(StormTornadoFunnel).GetField("age", flags);
+    var floor = typeof(StormTornadoFunnel).GetProperty("VisibleFloor",flags);
+    var opacity = typeof(StormTornadoFunnel).GetProperty("CondensationOpacity",flags);
+    (float Floor, float Opacity, float Ground) Sample(float seconds)
+    {
+        age.SetValue(funnel, (TimeSince)seconds);
+        animate.Invoke(funnel, null);
+        return ((float)floor.GetValue(funnel), (float)opacity.GetValue(funnel), dust.Where(r=>r.LocalPosition.z<170).Sum(r=>r.Color.a));
+    }
+    var forming = Sample(1.4f);
+    var mature = Sample(9f);
+    var roping = Sample(16.5f);
+    var ending = Sample(17.97f);
+    if (forming.Floor < .45f || forming.Opacity < .4f || forming.Ground < 3 || mature.Floor > .02f || mature.Opacity < .95f)
+        throw new Exception($"A visible ground swirl and partial funnel should precede a fully condensed vortex: forming={forming}, mature={mature}.");
+    if (roping.Floor < .30f || roping.Ground < mature.Ground * .40f || roping.Opacity < .45f)
+        throw new Exception($"Condensation should lift or thin before the ground swirl dies: mature={mature}, roping={roping}.");
+    if (ending.Opacity > .02f || ending.Ground > 1)
+        throw new Exception($"Visual layers should be fading before the host despawns the tornado: ending={ending}.");
+    if (specimen.Components.GetAll<Collider>(FindMode.EverythingInSelfAndDescendants).Any())
+        throw new Exception("The visual vortex must not create collision.");
+    return new {Passed=true, Forming=new {forming.Floor, forming.Opacity, forming.Ground}, Mature=new {mature.Floor, mature.Opacity, mature.Ground}, Roping=new {roping.Floor, roping.Opacity, roping.Ground}};
+}
+finally
+{
+    specimen.Destroy();
+    if (camera.IsValid()) camera.RenderExcludeTags.Remove(tag);
+}

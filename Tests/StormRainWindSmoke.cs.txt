@@ -1,0 +1,16 @@
+var weather=Game.ActiveScene.GetAllComponents<StormWeather>().Single();
+var drops=weather.GameObject.Children.Single(x=>x.Name=="Nearby Rain").Children.Select(x=>x.Components.GetAll<SpriteRenderer>(FindMode.EverythingInSelf).Single()).ToArray();
+var update=typeof(StormWeather).GetMethod("UpdateDrops",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic);
+var eye=new Vector3(-4200,330,85);
+void At(float t)=>update.Invoke(weather,new object[]{eye,2.35f,t});
+At(7.0f);
+var start=drops.Where(r=>r.Enabled&&r.Color.a>.026f).ToDictionary(r=>r,r=>(Position:r.WorldPosition,Up:r.WorldRotation.Up));
+At(7.012f);
+var matched=start.Where(x=>x.Key.Enabled && (x.Key.WorldPosition-x.Value.Position).Length<60).ToArray();
+var aligned=matched.Count(x=>Vector3.Dot(x.Value.Up,(x.Value.Position-x.Key.WorldPosition).Normal)>.97f && x.Key.Billboard==SpriteRenderer.BillboardMode.None);
+var high=start.Count(x=>x.Value.Position.z>eye.z+440);
+var far=start.Count(x=>(x.Value.Position-eye).Length>470);
+var wind=matched.Select(x=>(x.Key.WorldPosition-x.Value.Position).WithZ(0).Length).Average();
+if(matched.Length<120 || aligned<matched.Length*.97f || high<15 || far<25 || wind<2.2f)
+    throw new Exception($"Rain must follow wind in world space with visible depth and height: aligned {aligned}/{matched.Length}, high {high}, far {far}, wind drift {wind:F2}.");
+return new {Passed=true,Aligned=aligned,Stable=matched.Length,High=high,Far=far,WindDrift=wind};

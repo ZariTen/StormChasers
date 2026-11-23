@@ -1,0 +1,33 @@
+var scene=Game.ActiveScene;
+var fixture=scene.CreateObject(false);
+const string tag="tornado_balance_probe";
+fixture.NetworkMode=NetworkMode.Never;
+fixture.WorldPosition=new Vector3(-4600,4400,0);
+fixture.Tags.Add(tag);
+var camera=scene.Camera;
+if(camera.IsValid()) camera.RenderExcludeTags.Add(tag);
+try
+{
+    var funnel=fixture.Components.Create<StormTornadoFunnel>();
+    funnel.Rating=0;
+    funnel.ShapeRoll=.50f;
+    fixture.Enabled=true;
+    await Task.Delay(120);
+    var flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
+    typeof(StormTornadoFunnel).GetField("age",flags).SetValue(funnel,(TimeSince)9f);
+    typeof(StormTornadoFunnel).GetMethod("Animate",flags).Invoke(funnel,null);
+    var volume=fixture.Children.Single(o=>o.Name=="Condensation Volume").GetComponent<ModelRenderer>();
+    var radii=volume.Attributes.GetVector4("VortexRadii",default);
+    var top=volume.Attributes.GetVector4("VortexPhase",default).x;
+    var debris=fixture.Children.Single(o=>o.Name=="Airborne Debris").Children.Count(o=>o.LocalScale.Length>.045f);
+    var dust=fixture.Children.Single(o=>o.Name=="Ground Dust").Children.Select(o=>o.GetComponent<SpriteRenderer>()).Where(r=>r.Color.a>.15f).ToArray();
+    var span=dust.Max(r=>r.LocalPosition.WithZ(0).Length+r.Size.x/2);
+    if(radii.z<125 || radii.z<radii.x*1.10f || top<radii.z*1.75f || debris>62 || span<790)
+        throw new Exception($"Expected a full stovepipe flaring into the cloud, less airborne clutter, and a wider ground skirt. Foot={radii.x:F0}, middle={radii.z:F0}, crown={top:F0}, debris={debris}, dust reach={span:F0}.");
+    return new {Passed=true, Foot=radii.x, Middle=radii.z, Crown=top, VisibleDebris=debris, DustReach=span};
+}
+finally
+{
+    fixture.Destroy();
+    if(camera.IsValid()) camera.RenderExcludeTags.Remove(tag);
+}

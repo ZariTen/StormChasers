@@ -46,6 +46,8 @@ public sealed class StormTornadoSpawner : Component
 		var funnel = tornado.Components.Create<StormTornadoFunnel>();
 		funnel.Rating = StormTornadoProfile.RatingFromRoll( System.Random.Shared.Next( 100 ) );
 		funnel.SizeRoll = System.Random.Shared.NextSingle();
+		funnel.ShapeRoll = System.Random.Shared.NextSingle();
+		funnel.Lifetime = Lifetime;
 		tornado.NetworkSpawn();
 		expires = Lifetime;
 	}

@@ -1,0 +1,15 @@
+var scene = Game.ActiveScene;
+var weather = scene.GetAllComponents<StormWeather>().Single();
+var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+var updateDrops = typeof(StormWeather).GetMethod("UpdateDrops", flags);
+var drops = weather.GameObject.Children.Single(x => x.Name == "Nearby Rain").Children
+    .Select(x => x.Components.GetAll<SpriteRenderer>(FindMode.EverythingInSelf).Single()).ToArray();
+var eye = new Vector3(-4000, 250, 80);
+updateDrops.Invoke(weather, new object[] { eye, 2.5f, 1.75f });
+var visible = drops.Where(x => x.Enabled && x.Color.a > .025f).ToArray();
+var longest = visible.Max(x => x.Size.y);
+var nearest = visible.Min(x => (x.WorldPosition - eye).Length);
+var highestOpacity = visible.Max(x => x.Color.a);
+if (visible.Length < 200 || longest > 31 || nearest < 60 || highestOpacity > .42f)
+    throw new Exception($"Heavy rain should use plenty of short, subdued droplets with a generous near fade: {visible.Length} drops, {longest:F1} max length, {nearest:F1} nearest, {highestOpacity:F2} alpha.");
+return new {Passed=true, Count=visible.Length, Longest=longest, Nearest=nearest, MaxAlpha=highestOpacity};

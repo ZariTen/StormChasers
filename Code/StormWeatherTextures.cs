@@ -40,20 +40,21 @@ internal static class StormWeatherTextures
 
 	internal static Sprite RainDrop()
 	{
-		const int Width = 8, Height = 64;
+		const int Width = 16, Height = 64;
 		var data = new byte[Width * Height * 4];
 		for ( var y = 0; y < Height; y++ )
 		for ( var x = 0; x < Width; x++ )
 		{
 			var u = (x + .5f) / Width;
 			var v = (y + .5f) / Height;
-			var gleam = Smooth( MathF.Min( u, 1 - u ) * 2 );
-			var tail = Smooth( v / .64f ) * Smooth( (1 - v) / .12f );
+			var halfWidth = .29f + .19f * Smooth( v / .72f );
+			var gleam = 1 - Smooth( (MathF.Abs( u - .5f ) / halfWidth - .15f) / .85f );
+			var tail = Smooth( v / .51f ) * Smooth( (1 - v) / .31f );
 			var offset = (y * Width + x) * 4;
 			data[offset] = data[offset + 1] = data[offset + 2] = 255;
-			data[offset + 3] = (byte)(255 * gleam * gleam * tail);
+			data[offset + 3] = (byte)(255 * gleam * tail);
 		}
-		return Upload( "weather_rain_drop", Width, Height, data );
+		return Upload( "weather_rain_streak", Width, Height, data );
 	}
 
 	static Sprite Upload( string name, int width, int height, byte[] data ) => Sprite.FromTexture(

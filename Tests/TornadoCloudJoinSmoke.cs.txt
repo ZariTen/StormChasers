@@ -1,0 +1,27 @@
+var scene=Game.ActiveScene;
+var fixture=scene.CreateObject(false);
+const string tag="cloud_join_probe";
+fixture.NetworkMode=NetworkMode.Never;
+fixture.Tags.Add(tag);
+fixture.WorldPosition=new Vector3(-4700,4400,0);
+var main=scene.Camera;
+if(main.IsValid()) main.RenderExcludeTags.Add(tag);
+try
+{
+    var funnel=fixture.Components.Create<StormTornadoFunnel>();
+    funnel.Rating=1;
+    fixture.Enabled=true;
+    await Task.Delay(150);
+    var body=fixture.Children.Single(o=>o.Name=="Condensation Volume").GetComponent<ModelRenderer>();
+    var bounds=body.Attributes.GetVector4("StormCloudBounds",default);
+    if(fixture.Children.Any(o=>o.Name=="Storm Cloud Base" || o.Name=="Eye Crown") || bounds.x<1450 || bounds.y<1050 || bounds.z<420)
+        throw new Exception("Local cloud sprites can paint over the new funnel. Expected a broad 3D wall cloud sampled by the same shader.");
+    var top=body.Attributes.GetVector4("VortexBounds",default);
+    if(top.y<top.z+550) throw new Exception("The volume proxy must include the cloud above the funnel join.");
+    return new {Passed=true, CloudHalfExtents=bounds.ToString(), ProxyTop=top.y};
+}
+finally
+{
+    fixture.Destroy();
+    if(main.IsValid()) main.RenderExcludeTags.Remove(tag);
+}

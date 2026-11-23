@@ -1,0 +1,26 @@
+var weather=Game.ActiveScene.GetAllComponents<StormWeather>().Single();
+var audio=weather.GameObject.Components.GetAll<Component>().Single(c=>c.GetType().Name=="StormAudio");
+var instance=System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance;
+var statics=System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static;
+var loops=audio.GetType().Assembly.GetType("StormAudioLoops");
+var layer=loops.GetNestedType("Layer",System.Reflection.BindingFlags.NonPublic);
+var render=loops.GetMethod("Render",statics);
+var checkedLayers=new System.Collections.Generic.Dictionary<string,string>();
+foreach(var (handleName, layerName) in new[]{("wind","Wind"),("rain","Rain"),("coveredRain","CoveredRain")})
+{
+    var handle=(SoundHandle)audio.GetType().GetField(handleName,instance).GetValue(audio);
+    if(handle is not {IsPlaying:true} || handle.SoundFile is null)
+        throw new Exception($"No live playback for {layerName}.");
+    var sound=handle.SoundFile;
+    var actual=await sound.GetSamplesInterleavedAsync();
+    var pcm=(byte[])render.Invoke(null,new[]{Enum.Parse(layer,layerName)});
+    var mismatch=0;
+    if(actual is null || actual.Length*2!=pcm.Length)
+        throw new Exception($"Engine returned an unexpected buffer for {sound.ResourcePath}.");
+    for(var i=0;i<actual.Length;i++)
+        if(actual[i]!=unchecked((short)(pcm[i*2] | pcm[i*2+1]<<8))) mismatch++;
+    if(mismatch!=0)
+        throw new Exception($"The live {layerName} voice uses stale or different PCM ({mismatch} differing samples in {sound.ResourcePath}).");
+    checkedLayers[layerName]=sound.ResourcePath;
+}
+return new {Passed=true, LiveSources=checkedLayers};

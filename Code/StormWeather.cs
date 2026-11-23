@@ -17,6 +17,7 @@ public sealed class StormWeather : Component
 	SpriteRenderer[] drops = Array.Empty<SpriteRenderer>();
 	GameObject rainPool;
 	StormTornadoFunnel tornado;
+	StormAudio audio;
 	Fog backgroundFog;
 	StormTornadoProfile stormProfile = StormTornadoProfile.ForRating( 0 );
 	float openCoreRadius;
@@ -169,6 +170,11 @@ public sealed class StormWeather : Component
 			nextShelterProbe = .12f;
 		}
 		UpdateDrops( eye, sheltered ? 0 : exposure, t );
+		if ( camera.IsValid() && !Application.IsDedicatedServer )
+		{
+			if ( !audio.IsValid() ) audio = Components.GetOrCreate<StormAudio>();
+			audio.UpdateMix( eye, PrecipitationAt( eye ), VisualGust, sheltered, tornado, t, Time.Delta );
+		}
 	}
 
 	public float PrecipitationAt( Vector3 position )

@@ -1,0 +1,26 @@
+var weather=Game.ActiveScene.GetAllComponents<StormWeather>().Single();
+var audio=weather.GameObject.Components.GetAll<Component>().Single(c=>c.GetType().Name=="StormAudio");
+var loops=audio.GetType().Assembly.GetType("StormAudioLoops");
+var layer=loops.GetNestedType("Layer",System.Reflection.BindingFlags.NonPublic);
+var render=loops.GetMethod("Render",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic);
+var stats=new System.Collections.Generic.Dictionary<string,double>();
+foreach (var (name, limit) in new[]{("Wind",.18), ("Rain",.48), ("CoveredRain",.19)})
+{
+    var pcm=(byte[])render.Invoke(null,new[]{Enum.Parse(layer,name)});
+    if(pcm.Length!=24000*12*2) throw new Exception($"Invalid loop length for {name}.");
+    double energy=0, diffEnergy=0;
+    short last=0;
+    for(var i=0;i<pcm.Length;i+=2)
+    {
+        var sample=unchecked((short)(pcm[i]|pcm[i+1]<<8));
+        energy+=(double)sample*sample;
+        if(i>0) diffEnergy+=(double)(sample-last)*(sample-last);
+        last=sample;
+    }
+    var rms=Math.Sqrt(energy/(pcm.Length/2))/32768;
+    var roughness=Math.Sqrt(diffEnergy/energy);
+    if(rms<.04 || rms>.15 || roughness>limit)
+        throw new Exception($"{name} is too sharp, too loud or silent: RMS={rms:F3}, high-frequency proxy={roughness:F3} (cap {limit:F2}).");
+    stats[name]=roughness;
+}
+return new {Passed=true, stats};

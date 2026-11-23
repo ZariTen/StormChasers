@@ -1,0 +1,45 @@
+var scene = Game.ActiveScene;
+var weather = scene.GetAllComponents<StormWeather>().Single();
+var audio = weather.GameObject.Components.GetAll<Component>().SingleOrDefault(c => c.GetType().Name == "StormAudio");
+if (!audio.IsValid()) throw new Exception("Map Weather has no client-local wind, rain, or tornado audio system.");
+var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+var drive = audio.GetType().GetMethod("UpdateMix", flags);
+SoundHandle Handle(string name) => (SoundHandle)audio.GetType().GetField(name, flags).GetValue(audio);
+var fixture = scene.CreateObject(false);
+fixture.NetworkMode = NetworkMode.Never;
+fixture.WorldPosition = new Vector3(500, 100, 0);
+try
+{
+    var vortex = fixture.Components.Create<StormTornadoFunnel>();
+    vortex.Rating = 3;
+    var listener = new Vector3(-650, 100, 80);
+    void Sample(Vector3 eye, float precipitation, float gust, bool roof, Component storm) =>
+        drive.Invoke(audio, new object[] { eye, precipitation, gust, roof, storm, 8f, 5f });
+    Sample(listener, .72f, 0f, false, null);
+    var baseWind = Handle("wind").Volume;
+    var baseRain = Handle("rain").Volume;
+    if (baseWind is < .01f or > .07f || baseRain is < .05f or > .16f || (Handle("roar")?.Volume ?? 0) > .01f)
+        throw new Exception("Wind and rain should stay quiet between tornadoes, without audible tornado roar.");
+    Sample(listener, 2.4f, .9f, false, vortex);
+    var openWind = Handle("wind").Volume;
+    var openRain = Handle("rain").Volume;
+    var nearRoar = Handle("roar").Volume;
+    var roar = Handle("roar");
+    if (openWind <= baseWind * 1.6f || openRain <= baseRain * 1.4f || nearRoar < .35f || roar.SpacialBlend < .65f || (roar.Position - vortex.WorldPosition).WithZ(0).Length > 5)
+        throw new Exception("Storm gusts, rain and a spatial roar following the tornado must strengthen outside.");
+    Sample(listener, 2.4f, .9f, true, vortex);
+    if (Handle("rain").Volume >= openRain * .25f || Handle("coveredRain").Volume < .08f || Handle("wind").Volume >= openWind * .65f)
+        throw new Exception("A roof should crossfade to muffled rain and reduce wind.");
+    Sample(new Vector3(-11000, 100, 80), 2.4f, .9f, false, vortex);
+    if (Handle("roar").Volume > nearRoar * .2f || new[]{"wind","rain","coveredRain","roar"}.Any(key=>!Handle(key).IsValid))
+        throw new Exception("Roar must attenuate across the map and all generated playback handles must exist.");
+    var farRoar = Handle("roar").Volume;
+    var windLoop = Handle("wind");
+    var rainLoop = Handle("rain");
+    // Wait beyond the generated 12-second buffer; the engine should be looping the same voices.
+    await Task.Delay(13000, cancellationToken);
+    if (!windLoop.IsPlaying || !rainLoop.IsPlaying || !ReferenceEquals(windLoop, Handle("wind")) || !ReferenceEquals(rainLoop, Handle("rain")))
+        throw new Exception("Ambient rain and wind must loop without respawning voices.");
+    return new {Passed=true, BaseWind=baseWind, BaseRain=baseRain, OpenWind=openWind, OpenRain=openRain, NearRoar=nearRoar, FarRoar=farRoar, LoopsStayedPlaying=true};
+}
+finally { fixture.Destroy(); }

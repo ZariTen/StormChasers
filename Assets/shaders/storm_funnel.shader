@@ -110,7 +110,10 @@ PS
 		float radial = length( crossSection );
 		bool hollow = VortexBounds.w > 0;
 		if ( radial > (hollow ? 1.20 : 1.39) ) return 0;
-		float turn = 3.7 * h - VortexPhase.w * (.92 - .35 * saturate( h ));
+		// Rotate continuously, but keep the twist between heights bounded. A persistent
+	// difference in spin rate would wind a multi-minute funnel into tight stripes.
+	float twist = 3.7 + 1.25 * sin( VortexPhase.w * .29 + .8 );
+	float turn = twist * saturate( h ) - VortexPhase.w * .78;
 		float s, c;
 		sincos( turn, s, c );
 		float2 spun = float2( dot( crossSection, float2(c, -s) ), dot( crossSection, float2(s, c) ) );

@@ -1,0 +1,87 @@
+var scene=Game.ActiveScene;
+var fixture=scene.CreateObject(true);
+fixture.NetworkMode=NetworkMode.Never;
+const string probeTag="march_banding_probe";
+const string weatherTag="march_banding_hide_weather";
+fixture.Tags.Add(probeTag);
+var main=scene.Camera;
+var weather=scene.GetAllComponents<StormWeather>().Single().GameObject;
+if(main.IsValid()) main.RenderExcludeTags.Add(probeTag);
+weather.Tags.Add(weatherTag);
+try
+{
+    GameObject Part()
+    {
+        var obj=scene.CreateObject(true);
+        obj.NetworkMode=NetworkMode.Never;
+        obj.Parent=fixture;
+        return obj;
+    }
+    var origin=new Vector3(0,3500,0);
+    var proxy=Part().Components.Create<ModelRenderer>();
+    proxy.Model=Model.Load("models/dev/box.vmdl");
+    proxy.MaterialOverride=Material.FromShader(Shader.Load("shaders/storm_funnel.shader"));
+    proxy.RenderType=ModelRenderer.ShadowRenderType.Off;
+    proxy.WorldPosition=origin+Vector3.Up*1800;
+    proxy.WorldScale=new Vector3(3200,3200,3600)/50;
+    var volumeType=TypeLibrary.GetType("StormFunnelVolume").TargetType;
+    var noise=(Texture)volumeType.GetProperty("Noise",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic).GetValue(null);
+    proxy.Attributes.Set("VortexNoise",noise);
+    proxy.Attributes.Set("VortexOrigin",origin);
+    proxy.Attributes.Set("VortexForward",new Vector2(1,0));
+    proxy.Attributes.Set("VortexBounds",new Vector4(1500,3600,3200,0));
+    proxy.Attributes.Set("VortexRadii",new Vector4(125,135,170,255));
+
+    var target=origin+new Vector3(0,20,2200);
+    var backdrop=Part().Components.Create<ModelRenderer>();
+    backdrop.Model=proxy.Model;
+    backdrop.MaterialOverride=Material.FromShader(Shader.Load("shaders/storm_debris.shader"));
+    backdrop.Attributes.Set("FragmentColor",new Vector3(.73f,.66f,.55f));
+    backdrop.WorldPosition=target+Vector3.Forward*1950;
+    backdrop.WorldScale=new Vector3(2,110,100);
+    var camera=Part().Components.Create<CameraComponent>();
+    camera.IsMainCamera=false;
+    camera.FieldOfView=29;
+    camera.ZFar=25000;
+    foreach(var t in new[]{"storm_tornado","player","viewmodel",weatherTag}) camera.RenderExcludeTags.Add(t);
+    const int size=321;
+    async Task<Color[]> Frame(float slope,bool show,string name=null)
+    {
+        var ray=new Vector3(MathF.Sqrt(1-slope*slope),0,slope);
+        camera.WorldPosition=target-ray*2600;
+        camera.WorldRotation=Rotation.LookAt(ray,Vector3.Up);
+        proxy.Enabled=show;
+        await Task.Delay(90,cancellationToken);
+        using var image=new Bitmap(size,size);
+        camera.RenderToBitmap(image);
+        if(name!=null) System.IO.File.WriteAllBytes(System.IO.Path.Combine(exchangeDirectory,name+".png"),image.ToPng());
+        return image.GetPixels();
+    }
+    proxy.Attributes.Set("VortexPhase",new Vector4(340,0,1,10f));
+    var early=await Frame(.62f,true,"march-early");
+    var baseline=await Frame(.62f,false);
+    proxy.Attributes.Set("VortexPhase",new Vector4(340,0,1,145f));
+    var late=await Frame(.62f,true,"march-late");
+    float Luma(Color c)=> .2126f*c.r+.7152f*c.g+.0722f*c.b;
+    // Measure repeated small-scale ridges along the body, away from the edges or backdrop horizon.
+    float Bands(Color[] colors)
+    {
+        float sum=0;
+        for(var x=138;x<182;x++)
+        for(var y=100;y<300;y++)
+            sum+=MathF.Abs( Luma(colors[(y-4)*size+x])+Luma(colors[(y+4)*size+x])-2*Luma(colors[y*size+x]) );
+        return sum/(44*200);
+    }
+    var visible=MathF.Abs(Luma(late[160*size+160])-Luma(baseline[160*size+160]));
+    var earlyBands=Bands(early);
+    var lateBands=Bands(late);
+    if(visible<.25f || lateBands>.0055f)
+        throw new Exception($"Late-life condensation should remain visible without developing tight stripes: early={earlyBands:F5}, late={lateBands:F5}, contrast={visible:F3}.");
+    return new {Passed=true, Early=earlyBands, Late=lateBands, Visible=visible, exchangeDirectory};
+}
+finally
+{
+    fixture.Destroy();
+    weather.Tags.Remove(weatherTag);
+    if(main.IsValid()) main.RenderExcludeTags.Remove(probeTag);
+}

@@ -22,7 +22,7 @@ public sealed class StormTornadoFunnel : Component
 	internal float CondensationOpacity { get; private set; }
 	static float WedgeScale( StormTornadoProfile profile ) => profile.WidthScale / StormTornadoProfile.ForRating( 5 ).WidthScale;
 	public float OpenCoreRadius => Rating >= 5 ? 480f * WedgeScale( Profile ) : 0f;
-	const float DriftSpeed = 78f;
+	internal const float DriftSpeed = 78f;
 	const int CoreCount = 52;
 	const int VaporCount = 192;
 	const int CloudCount = 74;

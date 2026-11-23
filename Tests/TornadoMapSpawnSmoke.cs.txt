@@ -1,0 +1,24 @@
+var scene=Game.ActiveScene;
+var spawner=scene.GetAllComponents<StormTornadoSpawner>().Single();
+var choose=typeof(StormTornadoSpawner).GetMethod("TryChooseSpawn",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic);
+if(choose is null) throw new Exception("The spawner still uses fixed markers rather than choosing terrain across the map.");
+var random=new Random(48763);
+var quadrants=new System.Collections.Generic.HashSet<int>();
+var points=new System.Collections.Generic.HashSet<Vector3>();
+int nearEdge=0;
+for(var i=0;i<220;i++)
+{
+    object[] args={random,Vector3.Zero,Rotation.Identity};
+    if(!(bool)choose.Invoke(spawner,args)) throw new Exception("No spawn on a map with plenty of valid ground.");
+    var point=(Vector3)args[1];
+    var heading=((Rotation)args[2]).Forward;
+    points.Add(point);
+    quadrants.Add((point.x>0?1:0)+(point.y>0?2:0));
+    if(MathF.Max(MathF.Abs(point.x),MathF.Abs(point.y))>5100) nearEdge++;
+    var pathEnd=point+heading*spawner.Lifetime*78;
+    var trace=scene.Trace.Ray(point+Vector3.Up*4,point+Vector3.Down*6).WithoutTags("player").Run();
+    if(!trace.Hit || (trace.GameObject.Name!="Flat Terrain"&&!trace.GameObject.Tags.Has("storm_road")) || MathF.Max(MathF.Abs(pathEnd.x),MathF.Abs(pathEnd.y))>6250)
+        throw new Exception($"Invalid spawn {point} on {trace.GameObject?.Name} or track leaves the playfield at {pathEnd}.");
+}
+if(quadrants.Count!=4 || points.Count<210 || nearEdge<25) throw new Exception("Spawns are not spread across the entire playable map.");
+return new {Passed=true, Unique=points.Count, Quadrants=quadrants.Count, NearEdge=nearEdge};

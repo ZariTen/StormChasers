@@ -2,7 +2,7 @@ var scene = Game.ActiveScene;
 GameObject[] Funnels() => scene.GetAllObjects(true).Where(x => x.Name == "Tornado" && x.Tags.Has("storm_tornado")).ToArray();
 GameObject[] Layer(GameObject tornado, string name) => tornado.Children.SingleOrDefault(x => x.Name == name)?.Children.ToArray() ?? Array.Empty<GameObject>();
 ModelRenderer Body(GameObject tornado) => tornado.Children.SingleOrDefault(x => x.Name == "Condensation Volume")?.GetComponent<ModelRenderer>();
-var markers = scene.GetAllComponents<StormTornadoSpawner>().Single().GameObject.Children;
+bool OnMap(Vector3 p) => MathF.Abs(p.x) < 6250 && MathF.Abs(p.y) < 6250;
 var deadline = DateTime.UtcNow.AddSeconds(23);
 GameObject tornado = null;
 while (DateTime.UtcNow < deadline)
@@ -10,7 +10,8 @@ while (DateTime.UtcNow < deadline)
     var live = Funnels();
     if (live.Length > 1) throw new Exception("More than one tornado was spawned.");
     var candidate = live.SingleOrDefault();
-    if (candidate.IsValid() && markers.Any(m => (m.WorldPosition - candidate.WorldPosition).Length < 400)
+    if (candidate.IsValid() && OnMap(candidate.WorldPosition)
+        && candidate.GetComponent<StormTornadoFunnel>() is { ElapsedSample: >= .5f and < 4f }
         && Body(candidate).IsValid() && Layer(candidate, "Ground Dust").Length >= 16)
     {
         tornado = candidate;
@@ -45,8 +46,8 @@ if ((tornado.WorldPosition - start).Length < 2 || (firstPuff.LocalPosition - puf
 var ageSample = effect.GetType().GetProperty("ElapsedSample");
 if (!tornado.Network.Active || ageSample?.GetValue(effect) is not float elapsed || elapsed < .45f || elapsed > effect.Lifetime)
     throw new Exception("An active vortex should publish a recent lifecycle age so new clients do not replay its formation.");
-var trace = scene.Trace.Ray(tornado.WorldPosition + Vector3.Up * 64, tornado.WorldPosition + Vector3.Down * 128).Run();
-if (!trace.Hit || (trace.GameObject?.Name != "Flat Terrain" && trace.GameObject?.Tags.Has("storm_road") != true))
+var trace = scene.Trace.Ray(tornado.WorldPosition + Vector3.Up * 64, tornado.WorldPosition + Vector3.Down * 128).WithoutTags("player").Run();
+if (!OnMap(tornado.WorldPosition) || !trace.Hit)
     throw new Exception("Tornado drifted away from the map surface.");
 for (var i = 0; i < 300 && Funnels().All(x => x.Id == tornado.Id); i++)
 {

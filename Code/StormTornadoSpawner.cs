@@ -1,4 +1,6 @@
-/// <summary>Places one tornado at a time at the child markers in the current map.</summary>
+using System;
+
+/// <summary>Places one tornado at a time on valid ground across the playable map.</summary>
 public sealed class StormTornadoSpawner : Component
 {
 	[Property] public float SpawnDelay { get; set; } = 3f;
@@ -8,7 +10,7 @@ public sealed class StormTornadoSpawner : Component
 	GameObject weather;
 	TimeUntil nextSpawn;
 	TimeUntil expires;
-	int nextMarker;
+	MeshComponent terrain;
 
 	protected override void OnStart() => nextSpawn = SpawnDelay;
 
@@ -36,20 +38,63 @@ public sealed class StormTornadoSpawner : Component
 			return;
 		}
 
-		if ( !nextSpawn || GameObject.Children.Count == 0 ) return;
-		var marker = GameObject.Children[nextMarker++ % GameObject.Children.Count];
+		if ( !nextSpawn ) return;
+		var random = Random.Shared;
+		if ( !TryChooseSpawn( random, out var position, out var rotation ) )
+		{
+			nextSpawn = SpawnDelay;
+			return;
+		}
 		tornado = Scene.CreateObject( false );
 		tornado.Name = "Tornado";
 		tornado.Tags.Add( "storm_tornado" );
-		tornado.WorldPosition = marker.WorldPosition;
-		tornado.WorldRotation = marker.WorldRotation;
+		tornado.WorldPosition = position;
+		tornado.WorldRotation = rotation;
 		var funnel = tornado.Components.Create<StormTornadoFunnel>();
-		funnel.Rating = StormTornadoProfile.RatingFromRoll( System.Random.Shared.Next( 100 ) );
-		funnel.SizeRoll = System.Random.Shared.NextSingle();
-		funnel.ShapeRoll = System.Random.Shared.NextSingle();
+		funnel.Rating = StormTornadoProfile.RatingFromRoll( random.Next( 100 ) );
+		funnel.SizeRoll = random.NextSingle();
+		funnel.ShapeRoll = random.NextSingle();
 		funnel.Lifetime = Lifetime;
 		tornado.NetworkSpawn();
 		expires = Lifetime;
+	}
+
+	bool TryChooseSpawn( Random random, out Vector3 position, out Rotation rotation )
+	{
+		position = default;
+		rotation = Rotation.Identity;
+		if ( !terrain.IsValid() )
+			terrain = Scene.GetAllComponents<MeshComponent>().FirstOrDefault( mesh => mesh.GameObject.Name == "Flat Terrain" );
+		if ( !terrain.IsValid() || terrain.Model is not { IsError: false } model ) return false;
+
+		var bounds = model.Bounds.Transform( terrain.WorldTransform );
+		var ground = terrain.GameObject;
+		const float edge = 8f;
+		var min = bounds.Mins + new Vector3( edge, edge, 0 );
+		var max = bounds.Maxs - new Vector3( edge, edge, 0 );
+		var drift = StormTornadoFunnel.DriftSpeed * (Lifetime + .25f);
+		for ( var i = 0; i < 24; i++ )
+		{
+			var x = min.x + (max.x - min.x) * random.NextSingle();
+			var y = min.y + (max.y - min.y) * random.NextSingle();
+			var hit = Scene.Trace.Ray( new Vector3( x, y, bounds.Maxs.z + 2048 ), new Vector3( x, y, bounds.Mins.z - 128 ) )
+				.WithoutTags( "player" ).Run();
+			if ( !hit.Hit || !hit.GameObject.IsValid() || hit.Normal.z < .88f ||
+				(hit.GameObject != ground && !hit.GameObject.Tags.Has( "storm_road" )) ) continue;
+
+			// Re-roll the heading, not the origin, so edge and corner spawns aren't penalized for pointing out of bounds.
+			var yaw = random.NextSingle() * 360f;
+			for ( var j = 0; j < 12; j++ )
+			{
+				var heading = Rotation.FromYaw( yaw + j * 30f );
+				var end = hit.HitPosition + heading.Forward * drift;
+				if ( end.x < min.x || end.x > max.x || end.y < min.y || end.y > max.y ) continue;
+				position = hit.HitPosition;
+				rotation = heading;
+				return true;
+			}
+		}
+		return false;
 	}
 
 	protected override void OnDisabled()

@@ -2,6 +2,16 @@
 set -euo pipefail
 
 project="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+project_file="$project/storm_chasers.sbproj"
+if [[ "${1:-}" == --addon ]]; then
+  shift
+  if ! command -v node >/dev/null 2>&1; then
+    printf '%s\n' 'Node.js is required to sync the shared tornado assets before launching the add-on.' >&2
+    exit 1
+  fi
+  node "$project/tools/sync-storm-disasters.cjs"
+  project_file="$project/Addons/StormDisasters/storm_disasters.sbproj"
+fi
 engine="${FACEPUNCH_ENGINE:-}"
 
 if [[ -z "$engine" && -f "$project/.sbox-engine" ]]; then
@@ -39,4 +49,4 @@ harfbuzz="$PWD/bin/linuxsteamrt64/libHarfBuzzSharp.so"
 if [[ -r "$harfbuzz" ]]; then
   editor_env+=("LD_PRELOAD=$harfbuzz${LD_PRELOAD:+:$LD_PRELOAD}")
 fi
-exec steam-run env "${editor_env[@]}" ./sbox-dev -project "$project/storm_chasers.sbproj" "$@"
+exec steam-run env "${editor_env[@]}" ./sbox-dev -project "$project_file" "$@"

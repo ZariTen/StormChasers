@@ -1,0 +1,36 @@
+var scene = Game.ActiveScene;
+if (!scene.GetAllComponents<MapInstance>().Any(x => x.MapName == "facepunch.flatgrass")) throw new Exception("Not playing stock Flatgrass.");
+var controller = scene.GetAllComponents<PlayerController>().Single(x => x.Network.Owner == Connection.Local);
+var playerType = TypeLibrary.GetType("Player").TargetType;
+var undoLast = playerType.GetMethod("RunUndo", new[] { typeof(Connection) }) ?? throw new Exception("Sandbox's undo entry point is missing.");
+var manager = TypeLibrary.GetType("GameManager").TargetType;
+var spawn = manager.GetMethod("Spawn", new[] { typeof(string), typeof(string), typeof(bool) });
+var results = new System.Collections.Generic.List<object>();
+foreach (var variant in new[] { ("rope_tornado", "Rope Tornado"), ("funnel_tornado", "Funnel Tornado"), ("wedge_tornado", "Wedge Tornado") })
+{
+    var path = $"storm_disasters/{variant.Item1}.sent";
+    if (!ResourceLibrary.TryGet<GameResource>(path, out var entry) || entry.GetType().Name != "ScriptedEntity") throw new Exception($"Unregistered menu entry: {path}.");
+    var before = scene.GetAllObjects(true).Select(o => o.Id).ToHashSet();
+    spawn.Invoke(null, new object[] { $"entity:{path}", null, true });
+    GameObject tornado = null;
+    for (var i = 0; i < 12 && !tornado.IsValid(); i++)
+    {
+        await Task.Delay(120, cancellationToken);
+        tornado = scene.GetAllObjects(true).FirstOrDefault(o => !before.Contains(o.Id) && o.Tags.Has("storm_disaster_tornado"));
+    }
+    if (!tornado.IsValid()) throw new Exception($"The stock spawn backend did not create {variant.Item2}.");
+    var visual = tornado.Children.FirstOrDefault(o => o.Name == "Tornado smoke");
+    var sprites = visual.IsValid() ? visual.Children.Select(o => o.GetComponent<SpriteRenderer>()).Where(r => r.IsValid()).ToArray() : Array.Empty<SpriteRenderer>();
+    var volume = tornado.Children.FirstOrDefault(o => o.Name == "Condensation Volume")?.GetComponent<ModelRenderer>();
+    if (!volume.IsValid() || volume.MaterialOverride is not { IsValid: true, IsError: false }) throw new Exception($"{variant.Item2} spawned without the funnel shader.");
+    if (sprites.Length != 36 || sprites.Any(r => r.Sprite == null || r.Size.x <= 0)) throw new Exception($"{variant.Item2} spawned but its script built {sprites.Length} dust sprites, not 36.");
+    var debris = tornado.Children.Single(o => o.Name == "Airborne Debris");
+    var first = sprites[0].GameObject.LocalPosition;
+    await Task.Delay(150, cancellationToken);
+    if (first == sprites[0].GameObject.LocalPosition) throw new Exception($"{variant.Item2} smoke did not move.");
+    undoLast.Invoke(null, new object[] { controller.Network.Owner });
+    await Task.Delay(150, cancellationToken);
+    if (tornado.IsValid() || visual.IsValid() || volume.IsValid() || debris.IsValid()) throw new Exception($"Undo left {variant.Item2} or its visual effects behind.");
+    results.Add(new { Name = variant.Item2, Sprites = sprites.Length, Animated = true, Undo = true });
+}
+return results;

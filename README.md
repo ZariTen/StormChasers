@@ -34,6 +34,7 @@ For a non-default Steam library, set `FACEPUNCH_ENGINE` to the s&box installatio
 
 ## Project layout
 
+- [`Addons/StormDisasters/`](Addons/StormDisasters/) — separately playable Sandbox add-on. `./launch.sh --addon` refreshes shared tornado visuals and opens its project on NixOS. Edit the game's profile and shader sources, then run `node tools/sync-storm-disasters.cjs` before committing or publishing their add-on equivalents. `node --test Tests/StormDisastersSync.test.cjs` checks for drift. The game’s weather lifecycle and the add-on’s Sandbox spawn/undo behavior remain separate.
 - `Assets/scenes/storm_chasers.scene` — terrain, four-way road, gas station, house, player spawn point, lighting, and tornado spawner. Keep its `storm_chasers.scene_d` sidecar: it stores the map's source polygon meshes and UVs.
 - `Code/StormTornado*.cs`, `Code/StormWeather*.cs`, and `Code/StormSmokeTexture.cs` — tornado lifecycle and ratings, weather and funnel effects, and procedural textures. No custom player, input, or inventory code.
 - `Code/StormTornadoRoute.cs` — host-side curved tracks, optional loops, and changing speed. `TornadoMapSpawnSmoke` checks route bounds, spawn distribution, and live movement.

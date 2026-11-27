@@ -13,6 +13,7 @@ obj/
 **/Properties/launchSettings.json
 Assets/**/*_c
 Assets/**/*_d
+Addons/**/Assets/**/*_c
 # Source polygon meshes and UVs for the map; not a compiled asset.
 !Assets/scenes/storm_chasers.scene_d
 

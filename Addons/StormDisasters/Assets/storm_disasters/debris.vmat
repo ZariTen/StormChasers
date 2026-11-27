@@ -1,0 +1,4 @@
+Layer0
+{
+    shader "shaders/storm_disasters_debris.shader"
+}

@@ -1,0 +1,34 @@
+var scene = Game.ActiveScene;
+if (!scene.GetAllComponents<MapInstance>().Any(m => m.MapName == "facepunch.flatgrass")) throw new Exception("Expected stock Flatgrass.");
+var results = new System.Collections.Generic.List<object>();
+foreach (var kind in new[] { "rope", "funnel", "wedge" })
+{
+    var prefab = GameObject.GetPrefab($"storm_disasters/{kind}_tornado.prefab");
+    var tornado = prefab.Clone(new Vector3(-1400, 1800, 16));
+    tornado.NetworkMode = NetworkMode.Never;
+    try
+    {
+        await Task.Delay(200, cancellationToken);
+        var box = tornado.Children.FirstOrDefault(o => o.Name == "Condensation Volume");
+        var volume = box?.GetComponent<ModelRenderer>();
+        if (!volume.IsValid() || volume.MaterialOverride is not { IsError: false, IsValid: true })
+            throw new Exception($"{kind}: no working shader-backed condensation volume.");
+        var dust = tornado.Children.Single(o => o.Name == "Tornado smoke").Children.Select(o => o.GetComponent<SpriteRenderer>()).ToArray();
+        if (dust.Length != 36 || dust.Any(x => !x.IsValid() || x.Size.x <= 0) || dust.Max(x => x.WorldPosition.z - tornado.WorldPosition.z) > 64)
+            throw new Exception($"{kind}: expected 36 soft ground-level dust sprites, got {dust.Length}.");
+        if (dust.Select(x => x.Sprite).Distinct().Count() < 2)
+            throw new Exception($"{kind}: dust was still using one repeated stock sprite.");
+        var debris = tornado.Children.FirstOrDefault(o => o.Name == "Airborne Debris");
+        var fragments = debris.IsValid() ? debris.Children.Select(o => o.GetComponent<ModelRenderer>()).ToArray() : Array.Empty<ModelRenderer>();
+        if (fragments.Length != 40 || fragments.Any(x => !x.IsValid() || x.Model is not { IsError: false } || x.MaterialOverride?.ResourcePath != "storm_disasters/debris.vmat"))
+            throw new Exception($"{kind}: expected 40 shaded render-only debris pieces.");
+        if (fragments.Select(x => x.Model).Distinct().Count() != 4)
+            throw new Exception($"{kind}: expected a mix of boards and three irregular fragment meshes.");
+        var before = fragments[3].WorldPosition;
+        await Task.Delay(100, cancellationToken);
+        if (fragments[3].WorldPosition == before) throw new Exception($"{kind}: debris did not move.");
+        results.Add(new { Kind = kind, Proxy = box.WorldScale.ToString(), Dust = dust.Length, Debris = fragments.Length });
+    }
+    finally { if (tornado.IsValid()) tornado.Destroy(); }
+}
+return results;

@@ -1,0 +1,22 @@
+{
+  "Title": "Storm Disasters",
+  "Type": "addon",
+  "Org": "local",
+  "OrgTitle": null,
+  "Ident": "storm_disasters",
+  "Schema": 1,
+  "IncludeSourceFiles": false,
+  "Resources": "/storm_disasters/*\n/shaders/storm_disasters_funnel.shader\n/shaders/storm_disasters_debris.shader",
+  "PublishUsedAssetsOnly": false,
+  "PackageReferences": [],
+  "EditorReferences": null,
+  "Mounts": null,
+  "IsStandaloneOnly": false,
+  "AI": {
+    "EnableMcpCommunication": true
+  },
+  "Metadata": {
+    "ParentPackage": "facepunch.sandbox",
+    "StartupScene": "scenes/sandbox.scene"
+  }
+}

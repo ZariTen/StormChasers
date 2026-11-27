@@ -1,0 +1,31 @@
+{
+  "RootObject": {
+    "__guid": "8c83a640-8264-4de9-abe6-0d9db3a067b3",
+    "__version": 2,
+    "Flags": 0,
+    "Name": "Funnel Tornado",
+    "Position": "0,0,0",
+    "Rotation": "0,0,0,1",
+    "Scale": "1,1,1",
+    "Tags": "storm_disaster_tornado",
+    "Enabled": true,
+    "NetworkMode": 2,
+    "NetworkFlags": 0,
+    "NetworkOrphaned": 0,
+    "NetworkTransmit": true,
+    "OwnerTransfer": 1,
+    "Components": [
+      {
+        "__type": "StormDisasterFunnel",
+        "__guid": "5427a1ab-f3cb-47a1-b6e8-9a0549dea18a",
+        "__enabled": true,
+        "Flags": 0,
+        "Strength": 2
+      }
+    ],
+    "Children": []
+  },
+  "ResourceVersion": 3,
+  "__references": [],
+  "__version": 3
+}

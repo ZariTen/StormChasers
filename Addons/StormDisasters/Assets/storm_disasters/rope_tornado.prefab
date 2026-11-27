@@ -1,0 +1,31 @@
+{
+  "RootObject": {
+    "__guid": "a8a84f8d-f425-4da9-9189-0d163a53d74e",
+    "__version": 2,
+    "Flags": 0,
+    "Name": "Rope Tornado",
+    "Position": "0,0,0",
+    "Rotation": "0,0,0,1",
+    "Scale": "1,1,1",
+    "Tags": "storm_disaster_tornado",
+    "Enabled": true,
+    "NetworkMode": 2,
+    "NetworkFlags": 0,
+    "NetworkOrphaned": 0,
+    "NetworkTransmit": true,
+    "OwnerTransfer": 1,
+    "Components": [
+      {
+        "__type": "StormDisasterFunnel",
+        "__guid": "7012b856-8cfd-48a5-abb5-4754a0c5bf9a",
+        "__enabled": true,
+        "Flags": 0,
+        "Strength": 1
+      }
+    ],
+    "Children": []
+  },
+  "ResourceVersion": 3,
+  "__references": [],
+  "__version": 3
+}

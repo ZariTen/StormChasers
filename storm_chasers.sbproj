@@ -2,13 +2,14 @@
   "Title": "Storm Chasers",
   "Type": "game",
   "Org": "local",
+  "OrgTitle": null,
   "Ident": "storm_chasers",
   "Schema": 1,
   "IncludeSourceFiles": false,
   "Resources": null,
   "PublishUsedAssetsOnly": true,
   "PackageReferences": [
-    "facepunch.sandbox#446139"
+    "facepunch.sandbox"
   ],
   "EditorReferences": null,
   "Mounts": null,

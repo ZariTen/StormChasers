@@ -73,11 +73,15 @@
         float nearStorm = 1f - Fade( distanceToStorm / 6800f );
         float eyeRadius = GameOpenCore() * GameWidthForRating( rating ) / GameF5WidthScale;
         float eyeReduction = wedge ? 0.87f * (1f - Fade( (distanceToStorm - eyeRadius) / 460f )) : 0f;
+        // The eyewall and outer skirt get the strongest bursts, not the sheltered eye or the distant map.
+        float wallGust = wedge ? strength * Fade( (severity - 0.6f) / 0.4f )
+            * Fade( (distanceToStorm - eyeRadius) / 720f ) * (1f - Fade( (distanceToStorm - 2100f) / 2800f )) : 0f;
+        wallGust *= 0.79f + 0.14f * MathF.Sin( age * 1.17f ) + 0.07f * MathF.Sin( age * 2.05f + 0.64f );
         float rain = strength * (0.85f + nearStorm * (0.82f + 0.45f * severity)) * (1f - eyeReduction);
         float gust = strength * (0.38f + 0.62f * severity) * (0.65f + 0.35f * nearStorm);
         UpdateOvercast( age, strength, severity, center );
-        UpdateRain( age, listener, underCover ? 0f : rain, gust );
-        UpdateStormAudio( age, rain, gust, center, distanceToStorm, severity );
+        UpdateRain( age, listener, underCover ? 0f : rain, gust, wallGust );
+        UpdateStormAudio( age, rain, gust + 0.54f * wallGust, center, distanceToStorm, severity );
     }
 
     void CreateWeather()
@@ -175,10 +179,10 @@
 
     float WrapNear( float value, float center, float span ) => center + (Wrap( (value-center)/span + 0.5f )-0.5f)*span;
 
-    void UpdateRain( float t, Vector3 eye, float exposure, float gust )
+    void UpdateRain( float t, Vector3 eye, float exposure, float gust, float wallGust )
     {
         var wind = new Vector3( 0.42f, 0.91f, 0f );
-        float speed = 320f + 465f * gust;
+        float speed = 320f + 465f * gust + 1850f * wallGust;
         rainTravel += speed * Time.Delta;
         float travel = rainTravel + 105f * MathF.Sin( t * 0.84f );
         float speedAndGust = speed + 88.2f * MathF.Cos( t * 0.84f );
@@ -201,14 +205,14 @@
             float fade = near ? Fade( (distance-57f)/108f ) * Fade( (430f-distance)/155f ) : Fade( (distance-270f)/250f ) * Fade( (1060f-distance)/320f );
             float seam = MathF.Max( MathF.Abs( delta.x ), MathF.Abs( delta.y ) );
             fade *= Fade( (span*0.5f-seam)/(span*0.14f) ) * Fade( (height*0.5f-MathF.Abs( delta.z-lift ))/(height*0.12f) );
-            float opacity = MathF.Min( near ? 0.39f : 0.25f, exposure*(near ? 0.16f+0.14f*v : 0.08f+0.08f*v) ) * fade;
+            float opacity = MathF.Min( near ? 0.39f : 0.25f, exposure*(near ? 0.16f+0.14f*v : 0.08f+0.08f*v) ) * (1f + 0.40f * wallGust) * fade;
             if ( opacity <= 0.007f ) { drop.Enabled = false; continue; }
             var up = (Vector3.Up*fall - wind*(coupling*speedAndGust)).Normal;
             var normal = -delta - up * Vector3.Dot( -delta, up );
             drop.WorldPosition = position;
             drop.WorldRotation = Rotation.LookAt( normal.LengthSquared > 0.001f ? normal.Normal : Vector3.Cross( up, Vector3.Forward ).Normal, up );
             float shade = 0.46f + 0.24f*v;
-            drop.Size = new Vector2( near ? 1.35f+0.85f*v : 1.8f+1.2f*v, (9f+13f*v+4f*exposure)*(near ? 0.56f+0.44f*Fade( (distance-100f)/175f ) : 1f) );
+            drop.Size = new Vector2( near ? 1.35f+0.85f*v : 1.8f+1.2f*v, (9f+13f*v+4f*exposure+24f*wallGust)*(near ? 0.56f+0.44f*Fade( (distance-100f)/175f ) : 1f) );
             drop.Color = new Color( shade*0.80f, shade*0.90f, shade, opacity );
             drop.Enabled = true;
         }

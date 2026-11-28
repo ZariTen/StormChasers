@@ -1,0 +1,86 @@
+// A level camera samples the bottom 32 units, inside the old dust-only band.
+// Compare the same frozen shader frame with condensation on and off, holding dust fixed.
+var scene = Game.ActiveScene;
+if (!scene.GetAllComponents<MapInstance>().Any(m => m.MapName == "facepunch.flatgrass")) throw new Exception("Expected Flatgrass.");
+var p = new Vector3(7400, 5600, 16);
+if (scene.GetAllComponents<Prop>().Any(x => (x.WorldPosition - p).WithZ(0).Length < 5200)) throw new Exception("Probe area occupied by props.");
+var cameraObject = new GameObject(true, "Surface condensation probe camera");
+var frozenObject = new GameObject(true, "Frozen surface probe");
+cameraObject.NetworkMode = frozenObject.NetworkMode = NetworkMode.Never;
+try
+{
+    var camera = cameraObject.AddComponent<CameraComponent>();
+    camera.IsMainCamera = false;
+    camera.FieldOfView = 45f;
+    camera.ZFar = 12000f;
+    foreach (var tag in new[] { "player", "viewmodel", "storm_disasters_weather", "storm_disaster_tornado" }) camera.RenderExcludeTags.Add(tag);
+    var frozen = frozenObject.AddComponent<ModelRenderer>();
+    frozen.RenderType = ModelRenderer.ShadowRenderType.Off;
+    var results = new System.Collections.Generic.List<object>();
+    var failures = new System.Collections.Generic.List<string>();
+    foreach (var key in new[] { "rope_tornado_f0", "funnel_tornado", "v_shape_tornado_f2", "cylinder_tornado_f2", "hourglass_tornado_f2", "wedge_tornado" })
+    {
+        var tornado = GameObject.GetPrefab($"storm_disasters/{key}.prefab").Clone(p);
+        tornado.NetworkMode = NetworkMode.Never;
+        Vector4 phase;
+        try
+        {
+            ModelRenderer source = null;
+            for (int i = 0; i < 60; i++)
+            {
+                await Task.Delay(33, cancellationToken);
+                source = tornado.Children.FirstOrDefault(o => o.Name == "Condensation Volume")?.GetComponent<ModelRenderer>();
+                if (source.IsValid() && source.Attributes.GetVector4("VortexPhase", default).x > 0) break;
+            }
+            if (!source.IsValid()) throw new Exception($"No shader volume for {key}.");
+            var root = tornado.WorldPosition;
+            frozenObject.WorldTransform = source.GameObject.WorldTransform;
+            frozen.Model = source.Model;
+            frozen.MaterialOverride = source.MaterialOverride;
+            foreach (var name in new[] { "VortexBounds", "VortexRadii", "VortexAxisX", "VortexAxisY", "StormCloudBounds", "VortexDustProfile" })
+                frozen.Attributes.Set(name, source.Attributes.GetVector4(name, default));
+            foreach (var name in new[] { "VortexForward", "VortexTop" })
+            {
+                var value = source.Attributes.GetVector4(name, default);
+                frozen.Attributes.Set(name, new Vector2(value.x, value.y));
+            }
+            foreach (var name in new[] { "VortexOrigin", "StormCloudCenter" })
+            {
+                var value = source.Attributes.GetVector4(name, default);
+                frozen.Attributes.Set(name, new Vector3(value.x, value.y, value.z));
+            }
+            frozen.Attributes.Set("VortexWedge", source.Attributes.GetFloat("VortexWedge", 0f));
+            frozen.Attributes.Set("VortexNoise", source.Attributes.GetTexture("VortexNoise", default));
+            frozen.Attributes.Set("VortexDustOpacity", 1f);
+            var cloud = frozen.Attributes.GetVector4("StormCloudBounds", default);
+            frozen.Attributes.Set("StormCloudBounds", new Vector4(cloud.x, cloud.y, cloud.z, 0f));
+            var radii = frozen.Attributes.GetVector4("VortexRadii", default);
+            cameraObject.WorldPosition = root + new Vector3(-MathF.Max(950f, radii.x * 2.4f), 0f, 32f);
+            cameraObject.WorldRotation = Rotation.Identity;
+            var measured = source.Attributes.GetVector4("VortexPhase", default);
+            phase = new Vector4(measured.x, -.115f, 1f, 17.4f);
+        }
+        finally { if (tornado.IsValid()) tornado.Destroy(); }
+
+        async Task<float[]> Capture(float cloudOpacity, float visibleFloor = -.115f)
+        {
+            frozen.Attributes.Set("VortexPhase", new Vector4(phase.x, visibleFloor, cloudOpacity, phase.w));
+            await Task.Delay(75, cancellationToken);
+            using var bitmap = new Bitmap(640, 361);
+            camera.RenderToBitmap(bitmap, false);
+            return Enumerable.Range(302, 36).Select(x => bitmap.GetPixel(x, 180)).Select(c => .2126f*c.r + .7152f*c.g + .0722f*c.b).ToArray();
+        }
+        var dustOnly = await Capture(0f);
+        var joined = await Capture(1f);
+        var suspendedDustOnly = await Capture(0f, .55f);
+        var suspended = await Capture(1f, .55f);
+        float darkening = dustOnly.Zip(joined, (a,b) => a-b).Average();
+        float prematureContact = suspendedDustOnly.Zip(suspended, (a,b) => MathF.Abs(a-b)).Average();
+        results.Add(new { Shape = key, DarkeningAtSurface = darkening });
+        if (darkening < .008f) failures.Add($"{key}: {darkening:F4}");
+        if (prematureContact > .003f) failures.Add($"{key}: visible condensation on grass during descent ({prematureContact:F4})");
+    }
+    if (failures.Count > 0) throw new Exception("Condensation is visually missing near the grass: " + string.Join(", ", failures));
+    return results;
+}
+finally { if (frozenObject.IsValid()) frozenObject.Destroy(); if (cameraObject.IsValid()) cameraObject.Destroy(); }

@@ -539,11 +539,15 @@ public sealed class StormDisasterFunnel : Component
         float nearStorm = 1f - Fade( distanceToStorm / 6800f );
         float eyeRadius = GameOpenCore() * GameWidthForRating( rating ) / GameF5WidthScale;
         float eyeReduction = wedge ? 0.87f * (1f - Fade( (distanceToStorm - eyeRadius) / 460f )) : 0f;
+        // The eyewall and outer skirt get the strongest bursts, not the sheltered eye or the distant map.
+        float wallGust = wedge ? strength * Fade( (severity - 0.6f) / 0.4f )
+            * Fade( (distanceToStorm - eyeRadius) / 720f ) * (1f - Fade( (distanceToStorm - 2100f) / 2800f )) : 0f;
+        wallGust *= 0.79f + 0.14f * MathF.Sin( age * 1.17f ) + 0.07f * MathF.Sin( age * 2.05f + 0.64f );
         float rain = strength * (0.85f + nearStorm * (0.82f + 0.45f * severity)) * (1f - eyeReduction);
         float gust = strength * (0.38f + 0.62f * severity) * (0.65f + 0.35f * nearStorm);
         UpdateOvercast( age, strength, severity, center );
-        UpdateRain( age, listener, underCover ? 0f : rain, gust );
-        UpdateStormAudio( age, rain, gust, center, distanceToStorm, severity );
+        UpdateRain( age, listener, underCover ? 0f : rain, gust, wallGust );
+        UpdateStormAudio( age, rain, gust + 0.54f * wallGust, center, distanceToStorm, severity );
     }
 
     void CreateWeather()
@@ -641,10 +645,10 @@ public sealed class StormDisasterFunnel : Component
 
     float WrapNear( float value, float center, float span ) => center + (Wrap( (value-center)/span + 0.5f )-0.5f)*span;
 
-    void UpdateRain( float t, Vector3 eye, float exposure, float gust )
+    void UpdateRain( float t, Vector3 eye, float exposure, float gust, float wallGust )
     {
         var wind = new Vector3( 0.42f, 0.91f, 0f );
-        float speed = 320f + 465f * gust;
+        float speed = 320f + 465f * gust + 1850f * wallGust;
         rainTravel += speed * Time.Delta;
         float travel = rainTravel + 105f * MathF.Sin( t * 0.84f );
         float speedAndGust = speed + 88.2f * MathF.Cos( t * 0.84f );
@@ -667,14 +671,14 @@ public sealed class StormDisasterFunnel : Component
             float fade = near ? Fade( (distance-57f)/108f ) * Fade( (430f-distance)/155f ) : Fade( (distance-270f)/250f ) * Fade( (1060f-distance)/320f );
             float seam = MathF.Max( MathF.Abs( delta.x ), MathF.Abs( delta.y ) );
             fade *= Fade( (span*0.5f-seam)/(span*0.14f) ) * Fade( (height*0.5f-MathF.Abs( delta.z-lift ))/(height*0.12f) );
-            float opacity = MathF.Min( near ? 0.39f : 0.25f, exposure*(near ? 0.16f+0.14f*v : 0.08f+0.08f*v) ) * fade;
+            float opacity = MathF.Min( near ? 0.39f : 0.25f, exposure*(near ? 0.16f+0.14f*v : 0.08f+0.08f*v) ) * (1f + 0.40f * wallGust) * fade;
             if ( opacity <= 0.007f ) { drop.Enabled = false; continue; }
             var up = (Vector3.Up*fall - wind*(coupling*speedAndGust)).Normal;
             var normal = -delta - up * Vector3.Dot( -delta, up );
             drop.WorldPosition = position;
             drop.WorldRotation = Rotation.LookAt( normal.LengthSquared > 0.001f ? normal.Normal : Vector3.Cross( up, Vector3.Forward ).Normal, up );
             float shade = 0.46f + 0.24f*v;
-            drop.Size = new Vector2( near ? 1.35f+0.85f*v : 1.8f+1.2f*v, (9f+13f*v+4f*exposure)*(near ? 0.56f+0.44f*Fade( (distance-100f)/175f ) : 1f) );
+            drop.Size = new Vector2( near ? 1.35f+0.85f*v : 1.8f+1.2f*v, (9f+13f*v+4f*exposure+24f*wallGust)*(near ? 0.56f+0.44f*Fade( (distance-100f)/175f ) : 1f) );
             drop.Color = new Color( shade*0.80f, shade*0.90f, shade, opacity );
             drop.Enabled = true;
         }
@@ -827,6 +831,12 @@ public sealed class StormDisasterFunnel : Component
         float condensation = Fade( progress / 0.095f ) * Fade( remaining / 0.10f );
         float circulation = Fade( progress / 0.055f ) * Fade( remaining / 0.095f );
         float rope = Fade( (0.29f - remaining) / 0.24f );
+        // The circulation is already at the surface. The visible cloud tip descends to meet its dust.
+        float startFloor = Shape == 2 ? 0.76f : 0.88f;
+        // Over twelve seconds at normal lifetime, ease both velocity and acceleration at the ends.
+        float descent = Math.Clamp( progress / 0.50f, 0f, 1f );
+        float eased = descent * descent * descent * (10f + descent * (-15f + 6f * descent));
+        float visibleFloor = GroundContactFloor + (startFloor - GroundContactFloor) * (1f - eased);
 
         float groundScale = MathF.Sqrt( GameWidthScale() );
         // The walk-in wedge radii are already game-sized at F5.
@@ -836,7 +846,7 @@ public sealed class StormDisasterFunnel : Component
         float top = GameTopRadius() * width;
         float baseRadius = radii.x;
         float flare = top - baseRadius;
-        if ( volume != null && volume.IsValid ) UpdateVolume( t, height, radii, top, groundScale, wedgeScale, rope, cloudLife, condensation );
+        if ( volume != null && volume.IsValid ) UpdateVolume( t, height, radii, top, groundScale, wedgeScale, rope, cloudLife, condensation, visibleFloor, circulation );
         // Live instances keep the old sprite pool across hot reload. Remove the
         // overlays without touching the actual sprite fallback for the funnel.
         if ( !removedDustOverlays )
@@ -859,15 +869,18 @@ public sealed class StormDisasterFunnel : Component
         if ( debris == null || fragments.Length != FragmentCount ) return;
         for ( int i = start; i < FallbackCount; i++ )
         {
-            // Keep a ring of fallback puffs at the ground while the others spiral upward.
-            float h = i < 8 ? 0f : Wrap( i / (float)FallbackCount + t * 0.12f );
+            // Keep the fallback dust independent of the descending cloud tip, too.
+            bool dust = i < 8;
+            float h = dust ? 0f : Wrap( i / (float)FallbackCount + t * 0.12f );
             float a = i * 2.399963f + t * (2.5f - h);
             float radius = SampleRadii( radii, top, h );
             float size = baseRadius * 0.95f + 38f + flare * h * h;
             var puff = puffs[i];
             puff.GameObject.WorldPosition = WorldPosition + FunnelAxis( t, h, groundScale, rope ) + new Vector3( MathF.Cos( a ) * radius, MathF.Sin( a ) * radius, 12f + height * h );
             puff.Size = new Vector2( size, size * 1.28f );
-            puff.Color = new Color( 0.24f, 0.25f, 0.27f, 0.69f * condensation );
+            float edge = Fade( (h - visibleFloor + 0.01f) / 0.125f );
+            puff.Color = dust ? new Color( 0.26f, 0.22f, 0.17f, 0.69f * circulation )
+                : new Color( 0.24f, 0.25f, 0.27f, 0.69f * condensation * edge );
         }
         UpdateDebris( t, presetHeight, radii, top, groundScale, rope, circulation, progress );
     }
@@ -1039,7 +1052,7 @@ public sealed class StormDisasterFunnel : Component
 
     float Duration() => Lifetime > 0f ? MathF.Max( 1f, Lifetime ) : 150f;
 
-    void UpdateVolume( float t, float height, Vector4 radii, float top, float groundScale, float wedgeScale, float rope, float cloudLife, float condensation )
+    void UpdateVolume( float t, float height, Vector4 radii, float top, float groundScale, float wedgeScale, float rope, float cloudLife, float condensation, float visibleFloor, float dustOpacity )
     {
         var b = FunnelAxis( t, 0.25f, groundScale, rope );
         var c = FunnelAxis( t, 0.50f, groundScale, rope );
@@ -1064,7 +1077,8 @@ public sealed class StormDisasterFunnel : Component
         volume.Attributes.Set( "VortexBounds", new Vector4( extent, fullHeight, height, wedge ? GameOpenCore() * wedgeScale : 0f ) );
         volume.Attributes.Set( "VortexWedge", wedge ? 1f : 0f );
         volume.Attributes.Set( "VortexRadii", radii );
-        volume.Attributes.Set( "VortexPhase", new Vector4( top, GroundContactFloor, condensation, t ) );
+        volume.Attributes.Set( "VortexPhase", new Vector4( top, visibleFloor, condensation, t ) );
+        volume.Attributes.Set( "VortexDustOpacity", dustOpacity );
         // Stronger tornadoes loft more material and break it into denser, sharper rolls.
         float intensity = DustIntensity();
         volume.Attributes.Set( "VortexDustProfile", new Vector4( 275f + 500f * intensity, (230f + 285f * intensity) * (wedge ? 0.62f : 1f), 2.55f + 2.25f * intensity, intensity ) );

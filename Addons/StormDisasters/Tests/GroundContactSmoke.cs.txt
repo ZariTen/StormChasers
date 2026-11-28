@@ -25,10 +25,7 @@ foreach (var (kind, altitude) in new[] { ("funnel", 0f), ("wedge", 320f) })
         if (!volume.IsValid()) throw new Exception($"{kind}: no shader-backed tornado after spawn.");
         await Task.Delay(100, cancellationToken);
         var first = tornado.WorldPosition;
-        // The shader's lower edge starts fading at floor - .01 and reaches full opacity at floor + .115.
-        var phase = volume.Attributes.GetVector4("VortexPhase", default);
-        if (phase.z <= 0f || phase.y > -0.115f)
-            failures.Add($"{kind}: forming condensation is disconnected, phase={phase}.");
+
         if (MathF.Abs(first.z - floor.HitPosition.z) > 2f)
             failures.Add($"{kind}: spawned {first.z - floor.HitPosition.z:F1} units off the floor.");
         await Task.Delay(600, cancellationToken);
@@ -37,7 +34,7 @@ foreach (var (kind, altitude) in new[] { ("funnel", 0f), ("wedge", 320f) })
         var travel = (current - first).WithZ(0).Length;
         if (!support.Hit || MathF.Abs(current.z - support.HitPosition.z) > 2f || travel < 15f)
             failures.Add($"{kind}: did not travel on the ground (travel={travel:F1}, floor gap={current.z - support.HitPosition.z:F1}).");
-        results.Add(new { kind, altitude, travel, FloorGap = current.z - support.HitPosition.z, VisibleFloor = phase.y });
+        results.Add(new { kind, altitude, travel, FloorGap = current.z - support.HitPosition.z });
     }
     finally { if (tornado.IsValid()) tornado.Destroy(); }
 }

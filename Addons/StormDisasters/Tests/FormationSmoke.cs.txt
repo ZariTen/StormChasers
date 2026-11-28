@@ -1,0 +1,54 @@
+// Run in stock Flatgrass Play; isolated probes do not touch the player's undo stack.
+var scene = Game.ActiveScene;
+if (!scene.GetAllComponents<MapInstance>().Any(m => m.MapName == "facepunch.flatgrass"))
+    throw new Exception("Expected stock Flatgrass.");
+var position = new Vector3(7400, 5600, 16);
+if (scene.GetAllComponents<Prop>().Any(x => (x.WorldPosition - position).WithZ(0f).Length < 5000f))
+    throw new Exception("Formation probe area is occupied by gameplay props.");
+var ground = scene.Trace.Ray(position + Vector3.Up * 200f, position - Vector3.Up * 400f).WithoutTags("player", "trigger").Run();
+if (!ground.Hit || ground.Normal.z < .65f) throw new Exception("Expected solid ground at the probe position.");
+var results = new System.Collections.Generic.List<object>();
+foreach (var kind in new[] { "funnel", "wedge" })
+{
+    var tornado = GameObject.GetPrefab($"storm_disasters/{kind}_tornado.prefab").Clone(ground.HitPosition + Vector3.Up * 320f);
+    tornado.NetworkMode = NetworkMode.Never;
+    try
+    {
+        async Task<(Vector4 Phase, float Dust, float Cloud)> Sample(float age)
+        {
+            for (int i = 0; i < 480; i++)
+            {
+                await Task.Delay(33, cancellationToken);
+                var volume = tornado.Children.SingleOrDefault(o => o.Name == "Condensation Volume")?.GetComponent<ModelRenderer>();
+                if (!volume.IsValid()) continue;
+                var phase = volume.Attributes.GetVector4("VortexPhase", default);
+                if (phase.w >= age)
+                    return (phase, volume.Attributes.GetFloat("VortexDustOpacity", 0f), volume.Attributes.GetVector4("StormCloudBounds", default).w);
+            }
+            throw new Exception($"{kind}: no volume frame at age {age}.");
+        }
+        var early = await Sample(1.15f);
+        if (early.Phase.y < .6f)
+            throw new Exception($"{kind}: condensation should start high, not fade in at full height. Phase={early.Phase}.");
+        if (early.Dust < .25f || early.Cloud < .35f || MathF.Abs(tornado.WorldPosition.z - ground.HitPosition.z) > 2f)
+            throw new Exception($"{kind}: expected early rotating dust and wall cloud over a grounded root. Dust={early.Dust}, cloud={early.Cloud}.");
+        var leavingCloud = await Sample(3f);
+        var midway = await Sample(6f);
+        if (midway.Phase.y < .25f || midway.Phase.y > .5f || midway.Phase.z < .9f)
+            throw new Exception($"{kind}: expected a dense funnel still descending around halfway at six seconds. Phase={midway.Phase}.");
+        var nearGround = await Sample(9f);
+        var formed = await Sample(12.25f);
+        if (formed.Phase.y > -.115f || formed.Phase.z < .95f || formed.Dust < .95f)
+            throw new Exception($"{kind}: funnel did not connect to the ground dust. Phase={formed.Phase}; dust={formed.Dust}.");
+        float Speed(Vector4 a, Vector4 b) => (a.y - b.y) / (b.w - a.w);
+        var leavingSpeed = Speed(early.Phase, leavingCloud.Phase);
+        var middleSpeed = Speed(leavingCloud.Phase, midway.Phase);
+        var landingSpeed = Speed(nearGround.Phase, formed.Phase);
+        if (leavingSpeed <= 0f || landingSpeed <= 0f || nearGround.Phase.y >= midway.Phase.y ||
+            leavingSpeed >= middleSpeed * .55f || landingSpeed >= middleSpeed * .4f)
+            throw new Exception($"{kind}: expected gradual acceleration out of the cloud and deceleration before touchdown. Speeds={leavingSpeed}, {middleSpeed}, {landingSpeed}.");
+        results.Add(new { Shape = kind, EarlyTip = early.Phase.y, MidwayTip = midway.Phase.y, MatureTip = formed.Phase.y, LeavingSpeed = leavingSpeed, MiddleSpeed = middleSpeed, LandingSpeed = landingSpeed });
+    }
+    finally { if (tornado.IsValid()) tornado.Destroy(); }
+}
+return results;

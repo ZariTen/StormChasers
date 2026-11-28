@@ -62,6 +62,7 @@ PS
 	float4 VortexRadii < Attribute( "VortexRadii" ); >;
 	float4 VortexPhase < Attribute( "VortexPhase" ); >; // top radius, visible floor, opacity, animation time
 	float4 VortexDustProfile < Attribute( "VortexDustProfile" ); >; // lift, radial spread, density, turbulence
+	float VortexDustOpacity < Attribute( "VortexDustOpacity" ); >; // surface circulation, independent of condensation
 	float4 VortexAxisX < Attribute( "VortexAxisX" ); >;
 	float4 VortexAxisY < Attribute( "VortexAxisY" ); >;
 	float2 VortexTop < Attribute( "VortexTop" ); >;
@@ -102,16 +103,18 @@ PS
 	{
 		float h = p.z / VortexBounds.z;
 		float edge = smoothstep( VortexPhase.y - .01, VortexPhase.y + .115, h ) * (1 - smoothstep( .965, 1.105, h ));
-		if ( edge < .002 ) return 0;
+		float dustH = p.z / max( 1, VortexDustProfile.x );
+		float dustMix = VortexDustProfile.x > 0 && VortexDustOpacity > 0 ? 1 - smoothstep( .16, 1, dustH ) : 0;
+		if ( edge < .002 && dustMix <= 0 ) return 0;
 		float radius = Curve( VortexRadii, VortexPhase.x, h );
 		// An elevated condensation tip tapers inward; it is not a slice through a solid tube.
 		radius *= 1 - (1 - VortexWedge) * .60 * smoothstep( 0, .24, VortexPhase.y ) * (1 - smoothstep( -.01, .21, h - VortexPhase.y ));
 		float2 center = float2( Curve( VortexAxisX, VortexTop.x, h ), Curve( VortexAxisY, VortexTop.y, h ) );
 		float2 crossSection = (p.xy - center) / max( radius, 10 );
 		float radial = length( crossSection );
-		float dustH = p.z / max( 1, VortexDustProfile.x );
-		float dustMix = VortexDustProfile.x > 0 ? 1 - smoothstep( .16, 1, dustH ) : 0;
-		float dustRadius = radius + VortexDustProfile.y * lerp( 1.10, .66, saturate( dustH ) );
+		// Let the wedge's skirt sweep over the surface without expanding its eye or upper funnel.
+		float surfaceSkirt = VortexWedge * (1 - smoothstep( .04, .38, dustH ));
+		float dustRadius = radius + VortexDustProfile.y * (lerp( 1.10, .66, saturate( dustH ) ) + surfaceSkirt * lerp( .55, 2.65, VortexDustProfile.w ));
 		float dustR = length( p.xy - center ) / max( 1, dustRadius );
 		if ( radial > lerp( 1.39, 1.20, VortexWedge ) && (dustMix <= 0 || dustR > 1.24) ) return 0;
 		// Rotate continuously, but keep the twist between heights bounded. A persistent
@@ -141,7 +144,11 @@ PS
 		float sideLight = smoothstep( -.85, 1.0, dot( crossSection, float2( -.65, .76 ) ) );
 		float silver = smoothstep( .64, 1, radial ) * sideLight;
 		float3 color = lerp( float3( .023, .029, .037 ), float3( .153, .167, .185 ), saturate( .12 + .48*sideLight + .35*ridge + .14*silver ) );
-		float body = density * 4.4 / max( 52, radius ) * (1 - dustMix);
+		// Dust wraps the foot; it does not replace the bottom of the condensation column.
+		// The moving condensation edge still controls when the tip can reach the surface.
+		float foot = 1 - smoothstep( .07, .42, dustH );
+		float body = density * 4.4 / max( 52, radius ) * lerp( 1, lerp( .45, .90, foot ), dustMix );
+		color *= 1 - .30 * foot * dustMix;
 		if ( dustMix <= 0 || dustR > 1.24 ) return float4( color, body );
 		// Mix the spinning dust into the same volume so condensation cannot draw over it.
 		float turbulence = VortexDustProfile.w;
@@ -154,7 +161,8 @@ PS
 		float envelope = 1 - smoothstep( .38, 1.04, dustR + lerp( .38, .70, turbulence ) * (.52 - billow) );
 		float eye = lerp( 1, smoothstep( VortexBounds.w, VortexBounds.w + radius * .25, dustR * dustRadius ), VortexWedge );
 		float ground = smoothstep( -.035, .14, dustH + .13 * (billow - .5) );
-		float dust = VortexDustProfile.z * dustMix * ground * envelope * eye * folds * VortexPhase.z / max( 120, dustRadius );
+		ground = max( ground, surfaceSkirt * lerp( .62, 2.10, turbulence ) );
+		float dust = VortexDustProfile.z * dustMix * ground * envelope * eye * folds * VortexDustOpacity / max( 120, dustRadius );
 		float grit = lerp( billow, smoothstep( .31, .76, .67 * billow + .33 * wisps.g ), turbulence );
 		float3 dustColor = lerp( float3( .057, .047, .037 ), float3( .275, .232, .179 ), grit );
 		return float4( (body * color + dust * dustColor) / max( .000001, body + dust ), body + dust );
@@ -200,15 +208,16 @@ PS
 		float farDist = distance( proxy, camera ) + 2;
 		if ( Depth::Get( i.vPositionSs.xy ) > 0.0000001 )
 			farDist = min( farDist, dot( Depth::GetWorldPosition( i.vPositionSs.xy ) - camera, worldRay ) );
-		float2 funnel = Interval( origin, ray, float3( -VortexBounds.xx, VortexBounds.z * max( 0, VortexPhase.y - .012 ) ), float3( VortexBounds.xx, VortexBounds.z * 1.108 ) );
+		bool hasDust = VortexDustProfile.x > 0 && VortexDustOpacity >= .004;
+		float lowerZ = hasDust ? 0 : VortexBounds.z * max( 0, VortexPhase.y - .012 );
+		float2 funnel = Interval( origin, ray, float3( -VortexBounds.xx, lowerZ ), float3( VortexBounds.xx, VortexBounds.z * 1.108 ) );
 		float2 cap = Interval( origin, ray, StormCloudCenter - StormCloudBounds.xyz, StormCloudCenter + StormCloudBounds.xyz );
 		funnel = float2( max( funnel.x, 4 ), min( funnel.y, farDist ) );
 		cap = float2( max( cap.x, 4 ), min( cap.y, farDist ) );
-		bool hasFunnel = funnel.y > funnel.x && VortexPhase.z >= .004;
+		bool hasFunnel = funnel.y > funnel.x && (VortexPhase.z >= .004 || hasDust);
 		bool hasCloud = cap.y > cap.x && StormCloudBounds.w >= .004;
 		if ( !hasFunnel && !hasCloud ) discard;
 		float march = min( hasFunnel ? funnel.x : farDist, hasCloud ? cap.x : farDist );
-		bool hasDust = VortexDustProfile.x > 0;
 		float funnelStride = (funnel.y - funnel.x) / (hasDust ? 52 + 12 * abs( ray.z ) : (abs( ray.z ) > .48 ? 48 : 32));
 		float capStride = (cap.y - cap.x) / 28;
 		// Gradually spend more samples near the ground and central column. A hard

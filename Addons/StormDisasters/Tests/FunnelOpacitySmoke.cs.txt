@@ -15,14 +15,15 @@ try
     camera.FieldOfView = 54f;
     camera.ZFar = 14000f;
     ModelRenderer source = null;
-    for (int i = 0; i < 95; i++)
+    for (int i = 0; i < 370; i++)
     {
         await Task.Delay(40, cancellationToken);
         if (!tornado.IsValid()) throw new Exception("Source tornado lost ground.");
         source = tornado.Children.FirstOrDefault(o => o.Name == "Condensation Volume")?.GetComponent<ModelRenderer>();
-        if (source.IsValid() && source.Attributes.GetVector4("VortexPhase", default).w >= 2.5f) break;
+        if (source.IsValid() && source.Attributes.GetVector4("VortexPhase", default).w >= 12.1f) break;
     }
     if (!source.IsValid()) throw new Exception("No shader-backed condensation volume.");
+    if (source.Attributes.GetVector4("VortexPhase", default).y > -.115f) throw new Exception("Funnel has not reached the ground.");
     var root = tornado.WorldPosition;
     frozenObject.WorldTransform = source.GameObject.WorldTransform;
     var frozen = frozenObject.AddComponent<ModelRenderer>();
@@ -42,6 +43,7 @@ try
         frozen.Attributes.Set(key, new Vector3(value.x, value.y, value.z));
     }
     frozen.Attributes.Set("VortexWedge", source.Attributes.GetFloat("VortexWedge", 0f));
+    frozen.Attributes.Set("VortexDustOpacity", source.Attributes.GetFloat("VortexDustOpacity", 0f));
     frozen.Attributes.Set("VortexNoise", source.Attributes.GetTexture("VortexNoise", default));
     tornado.Destroy();
 

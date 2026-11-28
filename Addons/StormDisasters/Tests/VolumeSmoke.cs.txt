@@ -1,11 +1,14 @@
 var scene = Game.ActiveScene;
 if (!scene.GetAllComponents<MapInstance>().Any(m => m.MapName == "facepunch.flatgrass")) throw new Exception("Expected stock Flatgrass.");
+var position = new Vector3(5200, 4300, 16);
+if (scene.GetAllComponents<Prop>().Any(x => (x.WorldPosition - position).WithZ(0f).Length < 3500f))
+    throw new Exception("Volume probe area is occupied by existing gameplay props.");
 var results = new System.Collections.Generic.List<(string Kind, float ProxyHeight, float MinHeight, float TopRadius, float Travel, int Dust, int Debris)>();
 foreach (var (kind, suffix, minHeight) in new[] { ("rope", "", 3480f), ("funnel", "", 3820f), ("wedge", "", 5280f), ("v_shape", "_f2", 3820f), ("cylinder", "_f2", 3820f), ("hourglass", "_f2", 3820f) })
 {
     var prefab = GameObject.GetPrefab($"storm_disasters/{kind}_tornado{suffix}.prefab");
     if (!prefab.IsValid()) throw new Exception($"Missing prefab: {kind}");
-    var tornado = prefab.Clone(new Vector3(-1400, 1800, 16));
+    var tornado = prefab.Clone(position);
     tornado.NetworkMode = NetworkMode.Never;
     try
     {
@@ -25,11 +28,10 @@ foreach (var (kind, suffix, minHeight) in new[] { ("rope", "", 3480f), ("funnel"
         }
         if (firstPhase.x <= 0f) throw new Exception($"{kind}: shader parameters did not initialize.");
         var firstCloud = volume.Attributes.GetVector4("StormCloudBounds", default);
-        var dust = tornado.Children.Single(o => o.Name == "Tornado smoke").Children.Select(o => o.GetComponent<SpriteRenderer>()).ToArray();
-        if (dust.Length != 36 || dust.Any(x => !x.IsValid() || x.Size.x <= 0) || dust.Count(x => x.WorldPosition.z - tornado.WorldPosition.z < 85f) < 12)
-            throw new Exception($"{kind}: expected 36 soft dust sprites including a ground-level skirt, got {dust.Length}.");
-        if (dust.Select(x => x.Sprite).Distinct().Count() != 4)
-            throw new Exception($"{kind}: expected the four standalone dust masks.");
+        var dust = tornado.Children.Where(o => o.Name == "Tornado smoke").SelectMany(o => o.Children)
+            .Count(o => o.GetComponent<SpriteRenderer>().IsValid());
+        if (dust != 0 || volume.Attributes.GetVector4("VortexDustProfile", default).z < 2.55f)
+            throw new Exception($"{kind}: expected sandy volume dust without separate sprite overlays, got {dust} sprites.");
         var debris = tornado.Children.FirstOrDefault(o => o.Name == "Airborne Debris");
         var fragments = debris.IsValid() ? debris.Children.Select(o => o.GetComponent<ModelRenderer>()).ToArray() : Array.Empty<ModelRenderer>();
         if (fragments.Length != 56 || fragments.Any(x => !x.IsValid() || x.Model is not { IsError: false } || x.MaterialOverride?.ResourcePath != "storm_disasters/debris.vmat"))
@@ -46,7 +48,7 @@ foreach (var (kind, suffix, minHeight) in new[] { ("rope", "", 3480f), ("funnel"
         if (cloud.x < 2400f || cloud.z < 650f || cloud.w <= firstCloud.w || firstPhase.y > -0.115f || phase.y != firstPhase.y || phase.z <= firstPhase.z)
             throw new Exception($"{kind}: expected ground-connected condensation and a full-size forming wall cloud. Cloud {firstCloud} → {cloud}, phase {firstPhase} → {phase}.");
         if (fragments[3].LocalPosition == before) throw new Exception($"{kind}: debris did not animate relative to the tornado.");
-        results.Add((kind, proxyHeight, minHeight, phase.x, travel, dust.Length, fragments.Length));
+        results.Add((kind, proxyHeight, minHeight, phase.x, travel, dust, fragments.Length));
     }
     finally { if (tornado.IsValid()) tornado.Destroy(); }
 }

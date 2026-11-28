@@ -4,7 +4,7 @@ const {createHash} = require('node:crypto');
 const shapes = [
   ['rope', 'Rope', 1, 'A thin, winding funnel.', ['a8a84f8d-f425-4da9-9189-0d163a53d74e', '7012b856-8cfd-48a5-abb5-4754a0c5bf9a', 'eb1892f9-8082-4393-ad3a-ed2a1174693a', 'efab1742-3628-4de1-bc7e-ed3c78d5c8a3']],
   ['funnel', 'Cone', 2, 'A classic, rotating cone.', ['8c83a640-8264-4de9-abe6-0d9db3a067b3', '5427a1ab-f3cb-47a1-b6e8-9a0549dea18a', '38657042-8f79-4328-b60a-46f65bb284bb', '3acb27ab-f40b-44f5-a993-8067d3013557']],
-  ['wedge', 'Wedge', 5, 'A wide, dark funnel with a low dust skirt.', ['443d5557-20dd-4e0e-b7cf-a5c7e4d9087d', '71bc9527-1420-44e4-9cd0-75f263f553ba', 'e017b459-74f0-452c-8be6-a7efab8d854c', '88c0ebb5-d034-4763-a11d-09c03e6134a0']],
+  ['wedge', 'Wedge', 5, 'A wide, dark funnel with a rolling sandy base.', ['443d5557-20dd-4e0e-b7cf-a5c7e4d9087d', '71bc9527-1420-44e4-9cd0-75f263f553ba', 'e017b459-74f0-452c-8be6-a7efab8d854c', '88c0ebb5-d034-4763-a11d-09c03e6134a0']],
   ['v_shape', 'V-shaped', null, 'A steep-sided funnel that fans out toward the cloud base.'],
   ['cylinder', 'Cylinder', null, 'A broad, nearly straight-sided column.'],
   ['hourglass', 'Hourglass', null, 'A funnel with a pinched waist and flared ends.'],

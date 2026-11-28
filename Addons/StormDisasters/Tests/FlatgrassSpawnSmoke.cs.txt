@@ -23,11 +23,12 @@ foreach (var variant in new[] { ("rope_tornado", "Rope Tornado"), ("funnel_torna
     var sprites = visual.IsValid() ? visual.Children.Select(o => o.GetComponent<SpriteRenderer>()).Where(r => r.IsValid()).ToArray() : Array.Empty<SpriteRenderer>();
     var volume = tornado.Children.FirstOrDefault(o => o.Name == "Condensation Volume")?.GetComponent<ModelRenderer>();
     if (!volume.IsValid() || volume.MaterialOverride is not { IsValid: true, IsError: false }) throw new Exception($"{variant.Item2} spawned without the funnel shader.");
-    if (sprites.Length != 36 || sprites.Any(r => r.Sprite == null || r.Size.x <= 0)) throw new Exception($"{variant.Item2} spawned but its script built {sprites.Length} dust sprites, not 36.");
+    if (sprites.Length != 0 || volume.Attributes.GetVector4("VortexDustProfile", default).z < 2.55f)
+        throw new Exception($"{variant.Item2} did not preserve sandy volume dust without sprite overlays.");
     var debris = tornado.Children.Single(o => o.Name == "Airborne Debris");
-    var first = sprites[0].GameObject.LocalPosition;
+    var first = volume.Attributes.GetVector4("VortexPhase", default).w;
     await Task.Delay(150, cancellationToken);
-    if (first == sprites[0].GameObject.LocalPosition) throw new Exception($"{variant.Item2} smoke did not move.");
+    if (volume.Attributes.GetVector4("VortexPhase", default).w <= first) throw new Exception($"{variant.Item2} volume did not animate.");
     undoLast.Invoke(null, new object[] { controller.Network.Owner });
     await Task.Delay(150, cancellationToken);
     if (tornado.IsValid() || visual.IsValid() || volume.IsValid() || debris.IsValid()) throw new Exception($"Undo left {variant.Item2} or its visual effects behind.");

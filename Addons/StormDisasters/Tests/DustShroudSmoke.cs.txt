@@ -1,5 +1,8 @@
 // Check the live dust wrap without touching Sandbox's spawn or undo stack.
-var p = new Vector3(-1400f, 1800f, 16f);
+var scene = Game.ActiveScene;
+var p = new Vector3(5200f, 4300f, 16f);
+if (scene.GetAllComponents<Prop>().Any(x => (x.WorldPosition - p).WithZ(0f).Length < 3500f))
+    throw new Exception("Dust probe area is occupied by existing gameplay props.");
 var results = new System.Collections.Generic.List<object>();
 var failures = new System.Collections.Generic.List<string>();
 foreach (var name in new[] { "rope_tornado", "funnel_tornado", "wedge_tornado" })
@@ -14,23 +17,19 @@ foreach (var name in new[] { "rope_tornado", "funnel_tornado", "wedge_tornado" }
             await Task.Delay(50, cancellationToken);
             volume = tornado.Children.FirstOrDefault(o => o.Name == "Condensation Volume")?.GetComponent<ModelRenderer>();
         }
-        if (!volume.IsValid() || volume.Attributes.GetVector4("VortexDustProfile", default).x < 275f)
-            failures.Add($"{name}: missing the volume's dust blend.");
-        var root = tornado.WorldPosition;
-        var smoke = tornado.Children.Single(o => o.Name == "Tornado smoke");
-        var sprites = smoke.Children.Select(o => o.GetComponent<SpriteRenderer>()).ToArray();
-        var skirt = sprites.Count(x => x.WorldPosition.z - root.z < 85f && x.Color.a > .08f);
-        var veil = sprites.Where(x => x.WorldPosition.z - root.z > 155f && x.Color.a > .24f).ToArray();
-        var top = sprites.Max(x => x.WorldPosition.z - root.z);
-        if (skirt < 6 || veil.Length < 4 || top < 285f)
-            failures.Add($"{name}: skirt={skirt}, lofted wrap={veil.Length}, top={top:F0}.");
-        if (name.StartsWith("wedge") && veil.Any(x => (x.WorldPosition - root).WithZ(0f).Length < 800f))
-            failures.Add($"{name}: lofted dust blocks the wedge eye.");
-        var first = veil.Select(x => x.WorldPosition - root).ToArray();
+        if (!volume.IsValid()) throw new Exception($"{name}: missing the condensation volume.");
+        var dust = volume.Attributes.GetVector4("VortexDustProfile", default);
+        if (dust.x < 275f || dust.z < 2.55f)
+            failures.Add($"{name}: missing the volume's original sandy dust blend.");
+        var sprites = tornado.Children.Where(o => o.Name == "Tornado smoke").SelectMany(o => o.Children)
+            .Count(o => o.GetComponent<SpriteRenderer>().IsValid());
+        if (sprites != 0)
+            failures.Add($"{name}: expected no separate dust overlay on a shader-backed funnel, got {sprites}.");
+        var firstPhase = volume.Attributes.GetVector4("VortexPhase", default);
         await Task.Delay(200, cancellationToken);
-        if (veil.Length > 0 && !veil.Where((x, i) => (x.WorldPosition - tornado.WorldPosition - first[i]).WithZ(0f).Length > 25f).Any())
-            failures.Add($"{name}: dust wrap did not rotate relative to the root.");
-        results.Add(new { name, skirt, wrap = veil.Length, top });
+        if (volume.Attributes.GetVector4("VortexPhase", default).w <= firstPhase.w)
+            failures.Add($"{name}: the volume no longer animates.");
+        results.Add(new { name, Sprites = sprites, DustHeight = dust.x, DustDensity = dust.z });
     }
     finally { if (tornado.IsValid()) tornado.Destroy(); }
 }

@@ -1,7 +1,7 @@
 {
   "Prefab": "storm_disasters/wedge_tornado_f3.prefab",
   "Title": "Wedge Tornado (F3)",
-  "Description": "A wide, dark funnel with a low dust skirt. Can unfreeze nearby props. Use Sandbox undo to remove it.",
+  "Description": "A wide, dark funnel with a rolling sandy base. Can unfreeze nearby props. Use Sandbox undo to remove it.",
   "Category": "Tornadoes",
   "__references": [],
   "__version": 0

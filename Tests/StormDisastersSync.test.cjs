@@ -23,7 +23,7 @@ test('game profile, shape, core and shader edits regenerate the add-on', () => {
     template: game('tools/storm-disasters/StormDisasterFunnel.csx.in'),
     weather: game('tools/storm-disasters/Weather.csx.in'),
     volume: game('Code/StormFunnelVolume.cs'),
-    smoke: game('Code/StormSmokeTexture.cs'),
+
   };
   const old = render(source);
   const changed = render({...source,
@@ -51,8 +51,7 @@ test('game profile, shape, core and shader edits regenerate the add-on', () => {
   assert.notEqual(changed.script, old.script);
   assert.equal(Buffer.from(JSON.parse(old.noise), 'base64').length, 32**3*4);
   assert.notEqual(render({...source, volume: source.volume.replace('4, 701', '4, 702')}).noise, old.noise);
-  assert.equal(old.dust.length, 4);
-  assert.ok(old.dust.every(mask => Buffer.from(JSON.parse(mask), 'base64').length === 128**2*4));
+  assert.doesNotMatch(old.script, /dust_mask_|UpdateDustShroud/);
   assert.match(render({...source, funnel: source.funnel.replace('DebrisCount = 56', 'DebrisCount = 60').replace('145 + 420 * drift', '155 + 420 * drift')}).script, /155 \+ 420 \* drift/);
   assert.throws(() => render({...source, profiles: ''}), /rating 0/);
 });

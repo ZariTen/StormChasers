@@ -5,10 +5,13 @@ public sealed class StormDisasterFunnel : Component
     [Property] public int Strength { get; set; } = 2;
     [Property] public int Shape { get; set; } = 1; // Rope, Cone, Wedge, V-shaped, Cylinder, Hourglass
     [Property] public float Lifetime { get; set; } = 150f;
+
     const int FallbackCount = 48;
+
     // The shared shader fades its lower edge up to floor + .115. Keep that fade below grade.
     const float GroundContactFloor = -0.115f;
-    SpriteRenderer[] puffs = new SpriteRenderer[FallbackCount + DustCount];
+    SpriteRenderer[] puffs = new SpriteRenderer[FallbackCount];
+    bool removedDustOverlays;
     ModelRenderer[] fragments = new ModelRenderer[FragmentCount];
     GameObject visuals;
     GameObject debris;
@@ -19,7 +22,6 @@ public sealed class StormDisasterFunnel : Component
     float heading;
     float routePhase;
     float formedAt;
-
     float nextWindPulse;
     float lastWindPulse;
     System.Collections.Generic.Dictionary<GameObject, float> nextUnfreezeRoll;
@@ -36,8 +38,6 @@ public sealed class StormDisasterFunnel : Component
 
     // Shared profile values generated from the Storm Chasers game sources.
     const int FunnelNoiseSize = 32;
-    const int DustMaskSize = 128;
-    const int DustMaskCount = 4;
     float GameHeight()
     {
         if ( Strength <= 0 ) return 3200f;
@@ -110,27 +110,23 @@ public sealed class StormDisasterFunnel : Component
             volume.Attributes.Set( "VortexNoise", noise );
             start = FallbackCount;
         }
-        var smoke = Sprite.FromTexture( Texture.Load( "textures/particles/smoke/smoke_static_a.vtex" ) );
-        var masks = new Sprite[DustMaskCount];
-        for ( int i = 0; i < masks.Length; i++ ) masks[i] = LoadDustMask( i, smoke );
-        visuals = MakeVisual( GameObject, "Tornado smoke" );
-        for ( int i = start; i < puffs.Length; i++ )
+        else
         {
-            var sprite = MakeVisual( visuals, "Smoke puff" ).Components.Create<SpriteRenderer>();
-            sprite.Sprite = i < FallbackCount ? smoke : masks[(i - FallbackCount) % masks.Length];
-            sprite.Billboard = SpriteRenderer.BillboardMode.Always;
-            sprite.Opaque = false;
-            sprite.Lighting = false;
-            sprite.IsSorted = true;
-            sprite.AlphaCutoff = 0.008f;
-            sprite.DepthFeather = i >= FallbackCount ? 48f : 18f;
-            if ( i >= FallbackCount )
+            var smoke = Sprite.FromTexture( Texture.Load( "textures/particles/smoke/smoke_static_a.vtex" ) );
+            visuals = MakeVisual( GameObject, "Tornado smoke" );
+            for ( int i = 0; i < FallbackCount; i++ )
             {
-                sprite.CameraFadeNear = 4f;
-                sprite.CameraFadeFar = 20f;
+                var sprite = MakeVisual( visuals, "Smoke puff" ).Components.Create<SpriteRenderer>();
+                sprite.Sprite = smoke;
+                sprite.Billboard = SpriteRenderer.BillboardMode.Always;
+                sprite.Opaque = false;
+                sprite.Lighting = false;
+                sprite.IsSorted = true;
+                sprite.AlphaCutoff = 0.008f;
+                sprite.DepthFeather = 18f;
+                sprite.FogStrength = 0.48f;
+                puffs[i] = sprite;
             }
-            sprite.FogStrength = 0.48f;
-            puffs[i] = sprite;
         }
         CreateDebris();
         UpdateFunnel();
@@ -157,7 +153,7 @@ public sealed class StormDisasterFunnel : Component
         if ( !IsProxy ) UpdateTravel();
         if ( !GameObject.IsValid ) return;
         if ( !IsProxy && Networking.IsHost ) UpdatePropWind();
-        if ( visuals != null && visuals.IsValid ) UpdateFunnel();
+        if ( (volume != null && volume.IsValid) || (visuals != null && visuals.IsValid) ) UpdateFunnel();
         UpdateWeather();
     }
 
@@ -699,15 +695,6 @@ public sealed class StormDisasterFunnel : Component
         weather = null;
     }
 
-    Sprite LoadDustMask( int variant, Sprite fallback )
-    {
-        string name = "storm_disasters/dust_mask_" + variant;
-        string path = name + ".txt";
-        if ( !FileSystem.Mounted.FileExists( path ) ) return fallback;
-        var data = Json.Deserialize<byte[]>( FileSystem.Mounted.ReadAllText( path ) );
-        if ( data == null || data.Length != DustMaskSize * DustMaskSize * 4 ) return fallback;
-        return Sprite.FromTexture( Texture.Create( DustMaskSize, DustMaskSize, ImageFormat.RGBA8888 ).WithName( name ).WithData( data ).Finish() );
-    }
 
     void CreateDebris()
     {
@@ -817,8 +804,26 @@ public sealed class StormDisasterFunnel : Component
         float baseRadius = radii.x;
         float flare = top - baseRadius;
         if ( volume != null && volume.IsValid ) UpdateVolume( t, height, radii, top, groundScale, wedgeScale, rope, cloudLife, condensation );
-        // Hot reload retains old instance fields; only fresh spawns own the new pools.
-        if ( puffs.Length != FallbackCount + DustCount || debris == null || fragments.Length != FragmentCount ) return;
+        // Live instances keep the old sprite pool across hot reload. Remove the
+        // overlays without touching the actual sprite fallback for the funnel.
+        if ( !removedDustOverlays )
+        {
+            removedDustOverlays = true;
+            if ( volume != null && volume.IsValid && visuals != null && visuals.IsValid )
+            {
+                visuals.Destroy();
+                visuals = null;
+            }
+            else
+            {
+                for ( int i = FallbackCount; i < puffs.Length; i++ )
+                {
+                    var dust = puffs[i];
+                    if ( dust != null && dust.IsValid ) dust.GameObject.Destroy();
+                }
+            }
+        }
+        if ( debris == null || fragments.Length != FragmentCount ) return;
         for ( int i = start; i < FallbackCount; i++ )
         {
             // Keep a ring of fallback puffs at the ground while the others spiral upward.
@@ -831,36 +836,12 @@ public sealed class StormDisasterFunnel : Component
             puff.Size = new Vector2( size, size * 1.28f );
             puff.Color = new Color( 0.24f, 0.25f, 0.27f, 0.69f * condensation );
         }
-        UpdateDust( t, height, groundScale, Shape == 2 ? 1f : 0f, wedgeScale, radii, top, rope, circulation );
         UpdateDebris( t, height, radii, top, groundScale, rope, circulation, progress );
-    }
-
-    void UpdateDustShroud( SpriteRenderer puff, int i, float seed, float t, float height, float groundScale, Vector4 radii, float top, float rope, float circulation )
-    {
-        float intensity = DustIntensity();
-        // Stagger the rising sheets so some are always crossing in front of the funnel's foot.
-        float life = Wrap( i / (float)DustCount + t * (0.30f + 0.07f * seed + 0.18f * intensity) );
-        float angle = (i / 3f) * GoldenAngle + t * (1.90f + 0.42f * seed + 0.85f * intensity) + life * 1.5f;
-        float liftScale = MathF.Min( 1.40f, groundScale );
-        float z = (34f + (325f + 205f * intensity * seed) * life) * liftScale;
-        float h = z / height;
-        float wall = SampleRadii( radii, top, h );
-        bool wedge = Shape == 2;
-        float radius = wall * (wedge ? 1.03f : 1.08f) + (46f + 120f * life) * groundScale;
-        float breadth = wall * (wedge ? 0.64f : 0.70f) + (280f + 100f * life) * groundScale;
-        var center = FunnelAxis( t, h, groundScale, rope );
-        puff.WorldPosition = WorldPosition + center + Orbit( angle, radius, 0.94f ) + Vector3.Up * z;
-        puff.Size = new Vector2( breadth * (1f + 0.20f * intensity), (145f + 105f * life + 55f * seed) * liftScale * (1f - 0.28f * intensity) );
-        puff.FogStrength = .48f;
-        float shade = 0.18f + 0.10f * seed + 0.03f * life;
-        float opacity = Fade( life / .13f ) * Fade( (1f - life) / .32f );
-        puff.Color = new Color( shade * 1.09f, shade, shade * .88f, (.80f - .15f * intensity) * opacity * circulation );
     }
 
     float DustIntensity() => MathF.Min( 5f, MathF.Max( 0f, Strength ) ) / 5f;
 
-    // Adapted from StormTornadoFunnel.AnimateGround and AnimateDebris.
-    const int DustCount = 36;
+    // Effect data and debris animation adapted from StormTornadoFunnel.
     const int FragmentCount = 56;
     const float GoldenAngle = 2.399963f;
     float[] surfaceSeeds = new float[]
@@ -981,33 +962,6 @@ public sealed class StormDisasterFunnel : Component
     };
     float SurfaceSeed( int i ) => surfaceSeeds[i];
     Vector3 Orbit( float angle, float radius, float aspect ) => new Vector3( MathF.Cos( angle ) * radius, MathF.Sin( angle ) * radius * aspect, 0f );
-    void UpdateDust( float t, float height, float groundScale, float wedge, float wedgeScale, Vector4 radii, float top, float rope, float circulation )
-    {
-        for ( var i = 0; i < DustCount; i++ )
-        {
-            var renderer = puffs[FallbackCount + i];
-            var v = SurfaceSeed( i + 202 );
-            var cycle = Wrap( i / (float)DustCount + t * (.14f + .09f * v) );
-            var angle = i * GoldenAngle + t * (1.53f + .41f * v) + cycle * 1.45f;
-            var skirt = i % 3 != 0;
-            if ( !skirt )
-            {
-                UpdateDustShroud( renderer, i, v, t, height, groundScale, radii, top, rope, circulation );
-                continue;
-            }
-            var radius = (skirt ? 140 + 675 * cycle * (.75f + .48f * v) : 52 + 195 * cycle) * groundScale;
-            radius += 880 * wedgeScale * wedge;
-            var size = (skirt ? 230 + 405 * cycle + 95 * v : 204 + 190 * cycle + 90 * v) * groundScale;
-            var band = .67f + .33f * MathF.Cos( angle * 2 - t * 2.7f );
-            var opacity = Fade( cycle / .10f ) * Fade( (1 - cycle) / .39f ) * (.63f + .37f * band);
-            renderer.WorldPosition = WorldPosition + Orbit( angle, radius, .77f ) + Vector3.Up * (skirt ? 13 + 58 * v * (1 - cycle) : 46 + 105 * v * (1 - cycle));
-            renderer.Size = new Vector2( size, size * (skirt ? .24f + .16f * v : .53f + .16f * v) );
-            // A dark, loamy inner swirl and a cooler rain-mixed skirt, not an orange dust cloud in a downpour.
-            var shade = (skirt ? .24f : .125f) + .14f * v;
-            renderer.FogStrength = .48f;
-            renderer.Color = new Color( shade * 1.03f, shade, shade * (skirt ? .98f : .90f), (skirt ? .69f : .91f) * opacity * circulation );
-        }
-    }
     void UpdateDebris( float t, float height, Vector4 radii, float top, float groundScale, float rope, float circulation, float progress )
     {
         var loft = .20f + .80f * Fade( progress / .30f );

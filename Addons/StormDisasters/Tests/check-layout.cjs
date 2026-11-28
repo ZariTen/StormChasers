@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const {presetFiles} = require('../../../tools/storm-disasters/presets.cjs');
 const root = path.resolve(__dirname, '..');
 const read = file => JSON.parse(fs.readFileSync(path.join(root, file), 'utf8'));
 const projectFile = path.join(root, 'storm_disasters.sbproj');
@@ -10,15 +11,15 @@ assert.equal(project.Type, 'addon');
 assert.equal(project.Metadata.ParentPackage, 'facepunch.sandbox');
 const guids = new Set();
 const entityNames = new Set();
-const grouped = read('Assets/storm_disasters/tornadoes.spawn');
-assert.equal(grouped.Title, 'Tornadoes');
-assert.ok(!grouped.HideInSidebar);
-const expectedItems = [];
+assert.ok(!Array.from(presetFiles()).some(([file]) => /\.spawn(?:\.meta)?$/.test(file)),
+  'The preset generator must not duplicate tornadoes in Spawnlists');
+const assetFiles = fs.readdirSync(path.join(root, 'Assets/storm_disasters'));
+assert.ok(!assetFiles.some(file => /\.spawn(?:\.meta)?$/.test(file)),
+  'Tornadoes must only be listed in Entities, not Spawnlists');
 for (const [shape, label, legacyRating, index] of [
   ['rope', 'Rope', 1, 0], ['funnel', 'Cone', 2, 1], ['wedge', 'Wedge', 5, 2],
   ['v_shape', 'V-shaped', null, 3], ['cylinder', 'Cylinder', null, 4], ['hourglass', 'Hourglass', null, 5],
 ]) {
-  expectedItems.push({Kind: 'Title', Title: label});
   for (let rating = 0; rating <= 5; rating++) {
     const base = `${shape}_tornado${rating === legacyRating ? '' : `_f${rating}`}`;
     const resource = `storm_disasters/${base}`;
@@ -27,7 +28,6 @@ for (const [shape, label, legacyRating, index] of [
     assert.equal(entry.Title, `${label} Tornado (F${rating})`);
     assert.equal(entry.Description.includes('Can unfreeze nearby props.'), rating >= 3);
     assert.equal(entry.Category, 'Tornadoes');
-    expectedItems.push({Kind: 'Item', Ident: `entity:${resource}.sent`, Title: entry.Title});
     assert.equal(entry.Prefab, `${resource}.prefab`);
     const prefab = read(`Assets/${entry.Prefab}`).RootObject;
     assert.equal(prefab.Name, entry.Title);
@@ -44,7 +44,6 @@ for (const [shape, label, legacyRating, index] of [
     }
   }
 }
-assert.deepEqual(grouped.Items, expectedItems);
-assert.deepEqual(new Set(fs.readdirSync(path.join(root, 'Assets/storm_disasters')).filter(f => f.endsWith('.sent'))), entityNames);
+assert.deepEqual(new Set(assetFiles.filter(f => f.endsWith('.sent'))), entityNames);
 assert.match(fs.readFileSync(path.join(root, 'Assets/storm_disasters/StormDisasterFunnel.csx'), 'utf8'), /class StormDisasterFunnel\s*:\s*Component/);
 console.log(`${entityNames.size} native Sandbox entities resolve to separate shape/rating presets.`);

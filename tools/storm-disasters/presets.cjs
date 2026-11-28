@@ -17,9 +17,7 @@ function stableGuid(key) {
 
 function* presetFiles() {
   const json = value => JSON.stringify(value, null, 2) + '\n';
-  const items = [];
   for (const [shape, [key, label, legacyRating, description, legacyGuids]] of shapes.entries()) {
-    items.push({Kind: 'Title', Title: label});
     for (let strength = 0; strength <= 5; strength++) {
       const legacy = strength === legacyRating;
       const stem = `storm_disasters/${key}_tornado${legacy ? '' : `_f${strength}`}`;
@@ -31,7 +29,6 @@ function* presetFiles() {
         Prefab: `${stem}.prefab`, Title: title, Description: `${description} ${wind} Use Sandbox undo to remove it.`,
         Category: 'Tornadoes', __references: [], __version: 0,
       })];
-      items.push({Kind: 'Item', Ident: `entity:${stem}.sent`, Title: title});
       yield [`${stem}.prefab`, json({
         RootObject: {
           __guid: objectGuid, __version: 2, Flags: 0, Name: title, Position: '0,0,0', Rotation: '0,0,0,1', Scale: '1,1,1',
@@ -46,12 +43,6 @@ function* presetFiles() {
       yield [`${stem}.sent.meta`, json({guid: entryGuid})];
     }
   }
-  const spawnlist = 'storm_disasters/tornadoes.spawn';
-  yield [spawnlist, json({
-    Title: 'Tornadoes', Description: 'Storm Disasters tornadoes grouped by shape, with F0–F5 presets.',
-    Icon: 'cyclone', HideInSidebar: false, Items: items, __references: [], __version: 0,
-  })];
-  yield [`${spawnlist}.meta`, json({guid: stableGuid(spawnlist)})];
 }
 
 module.exports = {presetFiles};

@@ -1,31 +1,54 @@
 var scene = Game.ActiveScene;
 if (!scene.GetAllComponents<MapInstance>().Any(x => x.MapName == "facepunch.flatgrass"))
     throw new Exception("Expected stock Flatgrass.");
-const string path = "storm_disasters/tornadoes.spawn";
-if (!ResourceLibrary.TryGet<GameResource>(path, out var list) || list.GetType().Name != "SpawnlistResource")
-    throw new Exception($"Spawnlist not registered: {path}");
-var type = list.GetType();
-var visible = ((System.Collections.IEnumerable)type.GetMethod("GetVisible").Invoke(null, null)).Cast<object>();
-if (!visible.Contains(list)) throw new Exception("Tornadoes does not appear among the visible native spawnlists.");
-var data = type.GetMethod("ToData").Invoke(list, null);
-var rows = ((System.Collections.IEnumerable)data.GetType().GetProperty("Items").GetValue(data)).Cast<object>().ToArray();
-var names = new[] { "Rope", "Cone", "Wedge", "V-shaped", "Cylinder", "Hourglass" };
-if (rows.Length != names.Length * 7) throw new Exception($"Unexpected spawnlist row count {rows.Length}.");
-foreach (var (name, index) in names.Select((name, index) => (name, index)))
+
+if (!ResourceLibrary.TryGet<GameResource>("spawnlists/sandbox/builtin_models.spawn", out var stockList))
+    throw new Exception("Expected the stock Sandbox spawnlist resource.");
+var visible = ((System.Collections.IEnumerable)stockList.GetType().GetMethod("GetVisible").Invoke(null, null)).Cast<GameResource>();
+if (visible.Any(x => x.ResourcePath == "storm_disasters/tornadoes.spawn"))
+    throw new Exception("Tornadoes still appears in the native Spawnlists sidebar.");
+
+var shapes = new[] { ("rope", "Rope", 1), ("funnel", "Cone", 2), ("wedge", "Wedge", 5),
+    ("v_shape", "V-shaped", -1), ("cylinder", "Cylinder", -1), ("hourglass", "Hourglass", -1) };
+var entities = 0;
+foreach (var (shape, label, legacyRating) in shapes)
 {
-    var header = rows[index * 7];
-    var rowType = header.GetType();
-    if ((string)rowType.GetProperty("Title").GetValue(header) != name || !(bool)rowType.GetProperty("IsFullRow").GetValue(header))
-        throw new Exception($"Expected a full-row heading for {name}.");
     for (var rating = 0; rating <= 5; rating++)
     {
-        var item = rows[index * 7 + 1 + rating];
-        var title = (string)rowType.GetProperty("Title").GetValue(item);
-        var ident = (string)rowType.GetProperty("Ident").GetValue(item);
-        if (title != $"{name} Tornado (F{rating})" || !ident.StartsWith("entity:") ||
-            !ResourceLibrary.TryGet<GameResource>(ident[7..], out var entity) || entity.GetType().Name != "ScriptedEntity" ||
-            (string)entity.GetType().GetProperty("Category").GetValue(entity) != "Tornadoes")
-            throw new Exception($"Invalid spawnlist entry: {title} ({ident}).");
+        var suffix = rating == legacyRating ? "" : $"_f{rating}";
+        var path = $"storm_disasters/{shape}_tornado{suffix}.sent";
+        if (!ResourceLibrary.TryGet<GameResource>(path, out var entity) || entity.GetType().Name != "ScriptedEntity")
+            throw new Exception($"Missing scripted entity: {path}");
+        var type = entity.GetType();
+        if ((string)type.GetProperty("Category").GetValue(entity) != "Tornadoes" ||
+            (string)type.GetProperty("Title").GetValue(entity) != $"{label} Tornado (F{rating})" ||
+            entity.IsRemote || !(bool)type.GetProperty("IsMountAvailable").GetValue(entity) ||
+            (bool)type.GetProperty("Developer").GetValue(entity))
+            throw new Exception($"Invalid native Entities entry: {path}");
+        entities++;
     }
 }
-return new { List = "Tornadoes", Visible = true, Headings = names, SpawnTiles = rows.Length - names.Length };
+// The open menu can cache an option after the resource library drops it.
+const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+System.Collections.Generic.IEnumerable<Sandbox.UI.Panel> Walk(Sandbox.UI.Panel panel)
+{
+    if (panel == null || panel.IsDeleting) yield break;
+    yield return panel;
+    for (int i = 0; i < panel.ChildrenCount; i++)
+        foreach (var child in Walk(panel.GetChild(i))) yield return child;
+}
+var host = scene.GetAllComponents<PanelComponent>().Single(x => x.GetType().Name == "SpawnMenuHost");
+var panels = Walk(host.Panel).ToArray();
+string[] OptionKeys(string pageName)
+{
+    var page = panels.Single(x => x.GetType().Name == pageName);
+    var type = page.GetType();
+    while (type != null && type.Name != "BaseSpawnMenu") type = type.BaseType;
+    var options = ((System.Collections.IEnumerable)type.GetMethod("AllOptions", flags).Invoke(page, null)).Cast<object>();
+    return options.Select(o => (string)o.GetType().GetProperty("Key").GetValue(o)).ToArray();
+}
+if (OptionKeys("PropsPage").Contains("storm_disasters/tornadoes.spawn"))
+    throw new Exception("The live Spawnlists sidebar still has a cached Tornadoes option.");
+if (!OptionKeys("EntityPage").Contains("Tornadoes"))
+    throw new Exception("The live Entities sidebar is missing Tornadoes.");
+return new { SpawnlistOptionPresent = false, EntityCategory = "Tornadoes", Entities = entities };

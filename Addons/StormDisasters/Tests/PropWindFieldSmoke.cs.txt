@@ -1,0 +1,83 @@
+// Live checks for a shape-aware wind field and aerodynamic drag on stock Flatgrass.
+var scene = Game.ActiveScene;
+if (!Networking.IsHost || !scene.GetAllComponents<MapInstance>().Any(x => x.MapName == "facepunch.flatgrass")) throw new Exception("Expected local Flatgrass host.");
+var point = new Vector3(5200, 4300, 0);
+if (scene.GetAllComponents<Prop>().Any(p => (p.WorldPosition - point).WithZ(0).Length < 4000f) ||
+    scene.GetAllComponents<PlayerController>().Any(p => (p.WorldPosition - point).WithZ(0).Length < 4000f) ||
+    scene.GetAllObjects(true).Any(o => o.Parent == null && o.Tags.Has("storm_disaster_tornado") && (o.WorldPosition - point).WithZ(0).Length < 4500f))
+    throw new Exception("Probe area is occupied by existing gameplay objects.");
+var floor = scene.Trace.Ray(point + Vector3.Up * 100f, point - Vector3.Up * 100f).IgnoreDynamic().Run();
+if (!floor.Hit) throw new Exception("Probe area has no ground.");
+var origin = floor.HitPosition;
+var model = Model.Load("models/citizen_props/crate01.vmdl");
+var cleanup = new System.Collections.Generic.List<GameObject>();
+GameObject CreateCrate(Vector3 offset)
+{
+    var obj = scene.CreateObject(false);
+    cleanup.Add(obj);
+    obj.Name = "Wind: field check crate";
+    obj.NetworkMode = NetworkMode.Never;
+    obj.WorldPosition = origin + offset;
+    obj.Components.Create<Prop>().Model = model;
+    obj.Enabled = true;
+    return obj;
+}
+async Task<float[]> Test(string prefab)
+{
+    var specs = new[] {
+        (Offset: new Vector3(45,0,85), Mass: 80f),
+        (Offset: new Vector3(850,0,85), Mass: 80f),
+        (Offset: new Vector3(-850,0,85), Mass: 440f),
+        (Offset: new Vector3(0,1500,85), Mass: 80f),
+        (Offset: new Vector3(0,-3800,85), Mass: 80f),
+        (Offset: new Vector3(0,-850,85), Mass: 80f),
+    };
+    var wall = scene.CreateObject(false);
+    cleanup.Add(wall);
+    wall.Name = "Wind: fixed shelter check wall";
+    wall.NetworkMode = NetworkMode.Never;
+    wall.WorldPosition = origin + new Vector3(-105,-880,125);
+    var wallCollider = wall.Components.Create<BoxCollider>();
+    wallCollider.Static = true;
+    wallCollider.Scale = new Vector3(24,200,250);
+    wall.Enabled = true;
+    var props = specs.Select(x => CreateCrate(x.Offset)).ToArray();
+    var tornado = GameObject.GetPrefab($"storm_disasters/{prefab}.prefab").Clone(origin);
+    cleanup.Add(tornado);
+    tornado.NetworkMode = NetworkMode.Never;
+    // Measure fixed spatial samples by holding the tornado in place. Gravity
+    // stays off only for this spatial comparison; the grounded smoke tests it.
+    var started = Time.Now;
+    while (Time.Now - started < 0.75f) { await Task.Delay(30,cancellationToken); tornado.WorldPosition = origin; }
+    var bodies = props.Select(o => o.GetComponent<Rigidbody>()).ToArray();
+    for (int i = 0; i < props.Length; i++)
+    {
+        bodies[i].MassOverride = specs[i].Mass;
+        bodies[i].Gravity = false;
+        props[i].WorldPosition = origin + specs[i].Offset;
+        bodies[i].Velocity = Vector3.Zero;
+    }
+    started = Time.Now;
+    while (Time.Now - started < 0.42f) { await Task.Delay(30,cancellationToken); tornado.WorldPosition = origin; }
+    var speeds = bodies.Select(b => b.Velocity.WithZ(0f).Length).ToArray();
+    foreach (var obj in props) obj.Destroy();
+    wall.Destroy();
+    tornado.Destroy();
+    await Task.Delay(60,cancellationToken);
+    return speeds;
+}
+try
+{
+    var wedge = await Test("wedge_tornado");
+    if (wedge[1] < 40f || wedge[3] < 10f || wedge[0] > wedge[1] * 0.25f || wedge[4] > 1f)
+        throw new Exception($"F5 wedge should have a calm eye, an active wall, and exterior decay: {string.Join(", ", wedge)}.");
+    if (wedge[1] < wedge[2] * 2f) throw new Exception($"Light and dense crates accelerated too similarly: {string.Join(", ", wedge)}.");
+    if (wedge[5] > wedge[1] * 0.45f) throw new Exception($"A static wall failed to shelter the downwind crate: {string.Join(", ", wedge)}.");
+    var rope = await Test("rope_tornado_f5");
+    if (rope[3] > 1f || rope[1] > wedge[1] * 0.5f) throw new Exception($"F5 rope should have a narrower field than the wedge: {string.Join(", ", rope)}.");
+    return new { Samples = "Horizontal units/s: eye, light core, dense core, outer funnel, far outside, sheltered core", Wedge = wedge, Rope = rope };
+}
+finally
+{
+    foreach (var obj in cleanup) if (obj.IsValid()) obj.Destroy();
+}

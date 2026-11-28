@@ -1,7 +1,7 @@
 {
   "Prefab": "storm_disasters/wedge_tornado_f0.prefab",
   "Title": "Wedge Tornado (F0)",
-  "Description": "A wide, dark funnel with a low dust skirt. Visual only; use Sandbox undo to remove it.",
+  "Description": "A wide, dark funnel with a low dust skirt. Light wind nudges loose props. Use Sandbox undo to remove it.",
   "Category": "Tornadoes",
   "__references": [],
   "__version": 0

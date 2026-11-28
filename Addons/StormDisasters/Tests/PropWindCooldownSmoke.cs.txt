@@ -1,0 +1,109 @@
+// Run on stock Flatgrass. Keep the three temporary tornadoes in isolated probe areas.
+var scene = Game.ActiveScene;
+if (!Networking.IsHost || !scene.GetAllComponents<MapInstance>().Any(x => x.MapName == "facepunch.flatgrass"))
+    throw new Exception("Expected local host on stock Flatgrass.");
+var probes = new[] {
+    (Rating: 3, Seconds: 20f, Prefab: "cylinder_tornado_f3", Origin: new Vector3(-3400, 3400, 0), R: 295f, Clearance: 1700f),
+    (Rating: 4, Seconds: 15f, Prefab: "wedge_tornado_f4", Origin: new Vector3(500, 4000, 0), R: 625f, Clearance: 2400f),
+    (Rating: 5, Seconds: 10f, Prefab: "wedge_tornado", Origin: new Vector3(4200, 3500, 0), R: 850f, Clearance: 3100f),
+};
+var existing = scene.GetAllComponents<Prop>().Select(p => p.WorldPosition)
+    .Concat(scene.GetAllComponents<PlayerController>().Select(p => p.WorldPosition))
+    .Concat(scene.GetAllObjects(true).Where(o => o.Parent == null && o.Tags.Has("storm_disaster_tornado")).Select(o => o.WorldPosition)).ToArray();
+if (probes.Any(p => existing.Any(x => (x - p.Origin).WithZ(0f).Length < p.Clearance)))
+    throw new Exception("A probe area is occupied by an existing prop, player, or tornado.");
+const int samplesPerRing = 24;
+const int sample = 2 * samplesPerRing;
+var cleanup = new System.Collections.Generic.List<GameObject>();
+var crates = new GameObject[probes.Length][];
+var roots = new GameObject[probes.Length];
+var floors = new Vector3[probes.Length];
+var bodies = new Rigidbody[probes.Length][];
+var initial = new int[probes.Length];
+var final = new int[probes.Length];
+var released = new int[probes.Length];
+var firstRetry = new float[probes.Length];
+var model = Model.Load("models/citizen_props/crate01.vmdl");
+try
+{
+    for (int i = 0; i < probes.Length; i++)
+    {
+        var origin = probes[i].Origin;
+        var floor = scene.Trace.Ray(origin + Vector3.Up * 100f, origin - Vector3.Up * 100f).IgnoreDynamic().Run();
+        if (!floor.Hit || floor.Normal.z < 0.65f) throw new Exception($"No Flatgrass floor for F{probes[i].Rating}.");
+        floors[i] = floor.HitPosition;
+        crates[i] = new GameObject[sample];
+        for (int j = 0; j < sample; j++)
+        {
+            var crate = scene.CreateObject(false);
+            crates[i][j] = crate;
+            cleanup.Add(crate);
+            crate.Name = "Wind: cooldown test crate";
+            crate.NetworkMode = NetworkMode.Never;
+            float angle = j * MathF.Tau / samplesPerRing;
+            crate.WorldPosition = floors[i] + new Vector3(MathF.Cos(angle) * probes[i].R, MathF.Sin(angle) * probes[i].R, 80f + 100f * (j / samplesPerRing));
+            crate.LocalScale = Vector3.One * 0.2f;
+            crate.Components.Create<Prop>().Model = model;
+            crate.Enabled = true;
+        }
+    }
+    await Task.Delay(180, cancellationToken);
+    for (int i = 0; i < probes.Length; i++)
+    {
+        bodies[i] = crates[i].Select(o => o.GetComponent<Rigidbody>()).ToArray();
+        foreach (var body in bodies[i]) { body.Gravity = false; body.Velocity = Vector3.Zero; body.MotionEnabled = false; }
+    }
+    await Task.Delay(180, cancellationToken);
+    if (bodies.Any(row => row.Any(body => body.MotionEnabled))) throw new Exception("Probe crates failed to freeze.");
+    var started = Time.Now;
+    for (int i = 0; i < probes.Length; i++)
+    {
+        var root = GameObject.GetPrefab($"storm_disasters/{probes[i].Prefab}.prefab").Clone(floors[i]);
+        roots[i] = root;
+        cleanup.Add(root);
+        root.NetworkMode = NetworkMode.Never;
+    }
+    var capturedInitial = false;
+    while (firstRetry.Any(t => t == 0f))
+    {
+        await Task.Delay(40, cancellationToken);
+        var elapsed = Time.Now - started;
+        for (int i = 0; i < probes.Length; i++)
+        {
+            if (!roots[i].IsValid()) throw new Exception($"F{probes[i].Rating} disappeared.");
+            roots[i].WorldPosition = floors[i]; // Keep frozen crates in range for the full interval.
+            // Don't let freed test props fly across the live playtest.
+            for (int j = 0; j < sample; j++)
+            {
+                var body = bodies[i][j];
+                if (!body.IsValid() || !body.MotionEnabled) continue;
+                released[i]++;
+                crates[i][j].Destroy();
+                bodies[i][j] = null;
+            }
+            if (elapsed < 0.95f || firstRetry[i] != 0f) continue;
+            int count = released[i];
+            if (!capturedInitial)
+            {
+                if (count == sample) throw new Exception($"F{probes[i].Rating} left no frozen crates to observe.");
+                initial[i] = count;
+                continue;
+            }
+            if (count > initial[i])
+            {
+                if (elapsed < probes[i].Seconds)
+                    throw new Exception($"F{probes[i].Rating} retried too early: {elapsed:F2}s.");
+                firstRetry[i] = elapsed;
+                final[i] = count;
+            }
+            else if (elapsed > probes[i].Seconds + 1.5f)
+                throw new Exception($"F{probes[i].Rating} did not unfreeze any additional crates after the {probes[i].Seconds}s cooldown. Initial={string.Join(", ", initial)}; retries={string.Join(", ", firstRetry)}.");
+        }
+        if (elapsed >= 0.95f) capturedInitial = true;
+    }
+    return probes.Select((p, i) => new { p.Rating, p.Seconds, FirstObservedRetry = firstRetry[i], InitialUnfrozen = initial[i], AfterRetry = final[i], Sample = sample }).ToArray();
+}
+finally
+{
+    foreach (var obj in cleanup) if (obj.IsValid()) obj.Destroy();
+}

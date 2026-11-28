@@ -25,6 +25,7 @@ for (const [shape, label, legacyRating, index] of [
     entityNames.add(`${base}.sent`);
     const entry = read(`Assets/${resource}.sent`);
     assert.equal(entry.Title, `${label} Tornado (F${rating})`);
+    assert.equal(entry.Description.includes('Can unfreeze nearby props.'), rating >= 3);
     assert.equal(entry.Category, 'Tornadoes');
     expectedItems.push({Kind: 'Item', Ident: `entity:${resource}.sent`, Title: entry.Title});
     assert.equal(entry.Prefab, `${resource}.prefab`);
@@ -34,6 +35,7 @@ for (const [shape, label, legacyRating, index] of [
     const component = prefab.Components.find(c => c.__type === 'StormDisasterFunnel');
     assert.equal(component.Strength, rating);
     assert.equal(component.Shape, index);
+    assert.ok(!Object.hasOwn(component, 'ExperimentalPropWind'));
     assert.equal(prefab.NetworkMode, 2);
     for (const guid of [prefab.__guid, component.__guid, read(`Assets/${resource}.prefab.meta`).guid, read(`Assets/${resource}.sent.meta`).guid]) {
       assert.match(guid, /^[0-9a-f-]{36}$/);

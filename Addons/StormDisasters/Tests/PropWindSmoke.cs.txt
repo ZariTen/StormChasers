@@ -1,0 +1,126 @@
+// Run on stock Flatgrass. Uses temporary props and tornadoes, not the player's undo stack.
+var scene = Game.ActiveScene;
+if (!Networking.IsHost || !scene.GetAllComponents<MapInstance>().Any(x => x.MapName == "facepunch.flatgrass"))
+    throw new Exception("Expected local host on stock Flatgrass.");
+var floor = scene.Trace.Ray(new Vector3(5200, 4300, 100), new Vector3(5200, 4300, -100)).IgnoreDynamic().Run();
+if (!floor.Hit) throw new Exception("No Flatgrass floor at probe location.");
+var origin = floor.HitPosition;
+if (scene.GetAllComponents<Prop>().Any(p => (p.WorldPosition - origin).WithZ(0f).Length < 4000f) ||
+    scene.GetAllComponents<PlayerController>().Any(p => (p.WorldPosition - origin).WithZ(0f).Length < 4000f) ||
+    scene.GetAllObjects(true).Any(o => o.Parent == null && o.Tags.Has("storm_disaster_tornado") && (o.WorldPosition - origin).WithZ(0f).Length < 4500f))
+    throw new Exception("Probe area is occupied by existing gameplay objects.");
+var objects = new System.Collections.Generic.List<GameObject>();
+var model = Model.Load("models/citizen_props/crate01.vmdl");
+if (model.IsError || model.Physics == null) throw new Exception("Stock crate model has no usable physics.");
+GameObject CreateCrate(string name, Vector3 offset, float scale = 1f, bool isStatic = false)
+{
+    var obj = scene.CreateObject(false);
+    objects.Add(obj);
+    obj.Name = name;
+    obj.NetworkMode = NetworkMode.Never;
+    obj.WorldPosition = origin + offset;
+    obj.LocalScale = Vector3.One * scale;
+    var prop = obj.Components.Create<Prop>();
+    prop.Model = model;
+    prop.IsStatic = isStatic;
+    obj.Enabled = true;
+    return obj;
+}
+GameObject Spawn(string preset)
+{
+    var prefab = GameObject.GetPrefab($"storm_disasters/{preset}.prefab");
+    if (!prefab.IsValid()) throw new Exception($"Missing tornado preset: {preset}.");
+    var obj = prefab.Clone(origin);
+    objects.Add(obj);
+    obj.NetworkMode = NetworkMode.Never;
+    return obj;
+}
+async Task Simulate(float seconds, GameObject root = null, Action observe = null)
+{
+    var start = Time.Now;
+    while (Time.Now - start < seconds)
+    {
+        await Task.Delay(30, cancellationToken);
+        if (root.IsValid()) root.WorldPosition = origin;
+        observe?.Invoke();
+    }
+}
+try
+{
+    var distant = CreateCrate("Wind: out of range", new Vector3(0, -3800, 80));
+    var mapLike = CreateCrate("Wind: static control", new Vector3(-180, -120, 80), 1f, true);
+    var mapLikeStart = mapLike.WorldPosition;
+    await Simulate(0.15f);
+    var distantBody = distant.GetComponent<Rigidbody>();
+    distantBody.Gravity = false;
+    distantBody.Velocity = Vector3.Zero;
+    var presets = new[] { "rope_tornado_f0", "rope_tornado", "funnel_tornado", "cylinder_tornado_f3", "wedge_tornado_f4", "wedge_tornado" };
+    var radii = new[] { 53f, 89f, 140f, 298f, 625f, 855f };
+    var speeds = new float[presets.Length];
+    float liftF5 = 0;
+    for (int rating = 0; rating < presets.Length; rating++)
+    {
+        var loose = CreateCrate($"Wind: F{rating} loose", new Vector3(radii[rating], 0, 80));
+        await Simulate(1.05f);
+        var body = loose.GetComponent<Rigidbody>();
+        if (!body.IsValid()) throw new Exception("Stock crate did not create a rigidbody.");
+        // Keep shape and weight identical across ratings; use a hollow wooden
+        // crate rather than the model's much heavier default physics mass.
+        body.MassOverride = 20f;
+        var resting = loose.WorldPosition;
+        var tornado = Spawn(presets[rating]);
+        await Simulate(1.4f, tornado, () => {
+            speeds[rating] = MathF.Max(speeds[rating], body.Velocity.WithZ(0f).Length);
+            if (rating == 5) liftF5 = MathF.Max(liftF5, loose.WorldPosition.z - resting.z);
+        });
+        if (!tornado.IsValid()) throw new Exception($"F{rating} tornado failed to spawn.");
+        if (rating == 0 && (loose.WorldPosition - resting).WithZ(0).Length < 3f)
+            throw new Exception("F0 did not nudge a grounded crate.");
+        if (rating == 5)
+        {
+            if (liftF5 < 30f || speeds[5] < 2.5f * speeds[0])
+                throw new Exception($"F5 did not lift and move substantially more than F0: lift={liftF5}, speeds={string.Join(", ", speeds)}.");
+        }
+        tornado.Destroy();
+        body.Gravity = false;
+        body.Velocity = Vector3.Zero;
+        await Simulate(0.2f);
+        if (body.Velocity.Length > 3f && loose.WorldPosition.z > resting.z + 40f)
+            throw new Exception("Wind kept pushing an airborne crate after removal.");
+        loose.Destroy();
+    }
+    if (speeds.Any(s => s < 5f)) throw new Exception($"A rating failed to move a loose crate: {string.Join(", ", speeds)}.");
+    if (distantBody.Velocity.Length > 1f || (mapLike.WorldPosition - mapLikeStart).Length > 1f)
+        throw new Exception("The wind affected the distant or static control.");
+
+    var rates = new int[6];
+    const int sample = 40;
+    foreach (var rating in new[] { 0, 1, 2, 3, 4, 5 })
+    {
+        var crates = Enumerable.Range(0, sample).Select(i => {
+            float angle = i * MathF.Tau / 20f;
+            return CreateCrate("Wind: frozen control", new Vector3(MathF.Cos(angle) * radii[rating], MathF.Sin(angle) * radii[rating], 90f + 110f * (i / 20)), 0.2f);
+        }).ToArray();
+        await Simulate(0.12f);
+        var bodies = crates.Select(o => o.GetComponent<Rigidbody>()).ToArray();
+        foreach (var b in bodies) { b.Gravity = false; b.Velocity = Vector3.Zero; b.MotionEnabled = false; }
+        await Simulate(0.15f);
+        if (bodies.Any(b => b.MotionEnabled)) throw new Exception("The control crates did not freeze.");
+        var tornado = Spawn(presets[rating]);
+        await Simulate(1.2f, tornado);
+        rates[rating] = bodies.Count(b => b.MotionEnabled);
+        await Simulate(0.7f, tornado);
+        if (bodies.Count(b => b.MotionEnabled) != rates[rating])
+            throw new Exception($"F{rating} rerolled frozen props before its cooldown expired.");
+        tornado.Destroy();
+        foreach (var crate in crates) crate.Destroy();
+    }
+    // Broad bounds avoid making a gameplay probability test depend on an exact random draw.
+    if (rates.Take(3).Any(n => n != 0) || rates.Skip(3).Any(n => n == 0 || n == sample) || rates[5] <= rates[3])
+        throw new Exception($"Unexpected unfreeze results: {string.Join(", ", rates)} of {sample} each.");
+    return new { HorizontalSpeeds = speeds, LiftF5 = liftF5, UnfrozenByRating = rates, FrozenSamplePerRating = sample };
+}
+finally
+{
+    foreach (var obj in objects) if (obj.IsValid()) obj.Destroy();
+}

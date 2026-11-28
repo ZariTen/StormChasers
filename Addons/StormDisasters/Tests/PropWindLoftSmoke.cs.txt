@@ -1,0 +1,102 @@
+// Verify a grounded crate spirals upward before the tornado throws it out.
+var scene = Game.ActiveScene;
+if (!Networking.IsHost || !scene.GetAllComponents<MapInstance>().Any(m => m.MapName == "facepunch.flatgrass")) throw new Exception("Expected local Flatgrass host.");
+var occupied = scene.GetAllComponents<Prop>().Select(p => p.WorldPosition)
+    .Concat(scene.GetAllComponents<PlayerController>().Select(p => p.WorldPosition))
+    .Concat(scene.GetAllObjects(true).Where(o => o.Parent == null && o.Tags.Has("storm_disaster_tornado")).Select(o => o.WorldPosition)).ToArray();
+var point = new[] { new Vector3(5200,4300,0), new Vector3(-5200,-4300,0), new Vector3(5200,-4300,0), new Vector3(-5200,4300,0) }
+    .FirstOrDefault(p => occupied.All(o => (o-p).WithZ(0f).Length > 4800f));
+if (point == Vector3.Zero) throw new Exception("No isolated probe area on Flatgrass.");
+var ground = scene.Trace.Ray(point + Vector3.Up * 100f, point - Vector3.Up * 100f).IgnoreDynamic().IgnoreKeyframed().Run();
+if (!ground.Hit) throw new Exception("No ground at probe area.");
+var origin = ground.HitPosition;
+var model = Model.Load("models/citizen_props/crate01.vmdl");
+var probe = new System.Collections.Generic.List<GameObject>();
+GameObject Crate(string name, float x)
+{
+    var obj = scene.CreateObject(false);
+    probe.Add(obj);
+    obj.Name = "Wind: " + name;
+    obj.NetworkMode = NetworkMode.Never;
+    obj.WorldPosition = origin + new Vector3(x,0,55);
+    obj.Components.Create<Prop>().Model = model;
+    obj.Enabled = true;
+    return obj;
+}
+GameObject Tornado(string prefab)
+{
+    var obj = GameObject.GetPrefab($"storm_disasters/{prefab}.prefab").Clone(origin);
+    probe.Add(obj);
+    obj.NetworkMode = NetworkMode.Never;
+    return obj;
+}
+float CenterHeight(GameObject crate) => (crate.WorldPosition + crate.WorldRotation * model.Bounds.Center).z;
+async Task Sample(GameObject tornado, float seconds, Action observe, Func<bool> finished = null, bool holdPosition = true)
+{
+    float start = Time.Now;
+    while (Time.Now - start < seconds)
+    {
+        await Task.Delay(25,cancellationToken);
+        if (holdPosition) tornado.WorldPosition = origin;
+        observe();
+        if (finished?.Invoke() == true) break;
+    }
+}
+try
+{
+    var weakCrate = Crate("F0 light crate", 165f);
+    await Task.Delay(850,cancellationToken);
+    weakCrate.GetComponent<Rigidbody>().MassOverride = 20f;
+    var resting = CenterHeight(weakCrate);
+    var f0 = Tornado("wedge_tornado_f0");
+    float weakLift = 0f;
+    await Sample(f0, 1.5f, () => weakLift = MathF.Max(weakLift, CenterHeight(weakCrate)-resting));
+    weakCrate.Destroy();
+    f0.Destroy();
+
+    var light = Crate("F5 light crate", 850f);
+    var stock = Crate("F5 unmodified stock crate", -850f);
+    await Task.Delay(850,cancellationToken);
+    var lightBody = light.GetComponent<Rigidbody>();
+    var stockBody = stock.GetComponent<Rigidbody>();
+    lightBody.MassOverride = 20f;
+    var restLight = CenterHeight(light);
+    var restStock = CenterHeight(stock);
+    var f5 = Tornado("wedge_tornado");
+    var overlapping = Tornado("wedge_tornado");
+    var lastVelocity = lightBody.Velocity.WithZ(0f);
+    float maximumReleaseImpulse = 0f;
+    float liftLight=0f, liftStock=0f, previousAngle=0f, orbit=0f, releaseHeight=0f, releaseSpeed=0f;
+    await Sample(f5, 10f, () => {
+        overlapping.WorldPosition = f5.WorldPosition;
+        float z = CenterHeight(light) - restLight;
+        liftLight = MathF.Max(liftLight, z);
+        liftStock = MathF.Max(liftStock, CenterHeight(stock) - restStock);
+        var flat = (light.WorldPosition-f5.WorldPosition).WithZ(0f);
+        var radial = flat.Normal;
+        var angle = MathF.Atan2(flat.y, flat.x);
+        float delta = angle - previousAngle;
+        if (delta > MathF.PI) delta -= MathF.Tau;
+        if (delta < -MathF.PI) delta += MathF.Tau;
+        if (z > 50f && flat.Length > 280f) orbit += delta;
+        previousAngle = angle;
+        var v = lightBody.Velocity;
+        if (z > 760f) maximumReleaseImpulse = MathF.Max(maximumReleaseImpulse,(v.WithZ(0f)-lastVelocity).Length);
+        lastVelocity = v.WithZ(0f);
+        float outward = radial.x*v.x + radial.y*v.y;
+        if (z > 130f && flat.Length > 1090f && outward > 720f)
+        {
+            releaseHeight = z;
+            releaseSpeed = outward;
+        }
+    }, () => releaseHeight > 0f, holdPosition: false);
+    if (weakLift > 35f || liftStock < 100f || orbit < 1.25f*MathF.Tau || releaseHeight < 760f)
+        throw new Exception($"Unexpected spiral or throw: F0 lift={weakLift:F1}; stock lift={liftStock:F1}; light lift={liftLight:F1}; airborne turns={orbit/MathF.Tau:F2}; release height={releaseHeight:F1}; outward speed={releaseSpeed:F1}.");
+    if (maximumReleaseImpulse > 1800f) throw new Exception($"Two overlapping funnels stacked their release impulses ({maximumReleaseImpulse:F0}).");
+    var afterThrow = lightBody.Velocity.WithZ(0f);
+    await Sample(f5, 0.20f, () => {}, holdPosition: false);
+    var drift = (lightBody.Velocity.WithZ(0f) - afterThrow).Length;
+    if (drift > 180f) throw new Exception($"The prop was pulled back into the wind right after release (horizontal velocity change {drift:F0}).");
+    return new { F0LightLift = weakLift, F5StockMass = stockBody.Mass, F5StockLift = liftStock, AirborneTurns = orbit/MathF.Tau, ReleaseHeight = releaseHeight, ReleaseOutwardSpeed = releaseSpeed, PeakReleaseImpulse = maximumReleaseImpulse, HorizontalVelocityChangeAfterRelease = drift };
+}
+finally { foreach(var obj in probe) if(obj.IsValid()) obj.Destroy(); }

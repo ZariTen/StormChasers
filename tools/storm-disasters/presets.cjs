@@ -24,10 +24,11 @@ function* presetFiles() {
       const legacy = strength === legacyRating;
       const stem = `storm_disasters/${key}_tornado${legacy ? '' : `_f${strength}`}`;
       const title = `${label} Tornado (F${strength})`;
+      const wind = strength >= 3 ? 'Can unfreeze nearby props.' : strength === 0 ? 'Light wind nudges loose props.' : 'Wind moves loose props.';
       const [objectGuid, componentGuid, prefabGuid, entryGuid] = legacy ? legacyGuids :
         ['root', 'component', 'prefab', 'entry'].map(part => stableGuid(`${stem}:${part}`));
       yield [`${stem}.sent`, json({
-        Prefab: `${stem}.prefab`, Title: title, Description: `${description} Visual only; use Sandbox undo to remove it.`,
+        Prefab: `${stem}.prefab`, Title: title, Description: `${description} ${wind} Use Sandbox undo to remove it.`,
         Category: 'Tornadoes', __references: [], __version: 0,
       })];
       items.push({Kind: 'Item', Ident: `entity:${stem}.sent`, Title: title});

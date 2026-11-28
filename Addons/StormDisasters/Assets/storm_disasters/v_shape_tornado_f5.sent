@@ -1,7 +1,7 @@
 {
   "Prefab": "storm_disasters/v_shape_tornado_f5.prefab",
   "Title": "V-shaped Tornado (F5)",
-  "Description": "A steep-sided funnel that fans out toward the cloud base. Visual only; use Sandbox undo to remove it.",
+  "Description": "A steep-sided funnel that fans out toward the cloud base. Can unfreeze nearby props. Use Sandbox undo to remove it.",
   "Category": "Tornadoes",
   "__references": [],
   "__version": 0

@@ -1,7 +1,7 @@
 {
   "Prefab": "storm_disasters/rope_tornado_f5.prefab",
   "Title": "Rope Tornado (F5)",
-  "Description": "A thin, winding funnel. Visual only; use Sandbox undo to remove it.",
+  "Description": "A thin, winding funnel. Can unfreeze nearby props. Use Sandbox undo to remove it.",
   "Category": "Tornadoes",
   "__references": [],
   "__version": 0

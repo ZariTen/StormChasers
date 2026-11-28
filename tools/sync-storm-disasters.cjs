@@ -1,6 +1,11 @@
 // Generate the Sandbox script's shared values and copy the canonical shader verbatim.
 const fs = require('node:fs');
 const path = require('node:path');
+const {presetFiles} = require('./storm-disasters/presets.cjs');
+const {weatherAssets} = require('./storm-disasters/weather-assets.cjs');
+const {bakeFunnelNoise} = require('./storm-disasters/funnel-noise.cjs');
+const {bakeSmoke} = require('./storm-disasters/dust-masks.cjs');
+const {adaptGroundEffects} = require('./storm-disasters/ground-effects.cjs');
 
 const sources = {
   shader: 'Assets/shaders/storm_funnel.shader',
@@ -9,6 +14,9 @@ const sources = {
   shapes: 'Code/StormFunnelShape.cs',
   funnel: 'Code/StormTornadoFunnel.cs',
   template: 'tools/storm-disasters/StormDisasterFunnel.csx.in',
+  weather: 'tools/storm-disasters/Weather.csx.in',
+  volume: 'Code/StormFunnelVolume.cs',
+  smoke: 'Code/StormSmokeTexture.cs',
 };
 const outputs = {
   shader: 'Addons/StormDisasters/Assets/shaders/storm_disasters_funnel.shader',
@@ -19,6 +27,8 @@ const num = '(\\d+(?:\\.\\d+)?)f?';
 const pair = `new\\s*\\(\\s*${num}\\s*,\\s*${num}\\s*\\)`;
 const sections = `new\\s*\\(\\s*new\\s*\\(\\s*${Array(4).fill(num).join('\\s*,\\s*')}\\s*\\)\\s*,\\s*${num}\\s*\\)`;
 const marker = '    /* SHARED_GAME_PROFILE */';
+const weatherMarker = '    /* STORM_WEATHER */';
+const groundMarker = '    /* GROUND_EFFECTS */';
 
 function readLiteral(source, pattern, label) {
   const matches = [...source.matchAll(new RegExp(pattern, 'gm'))];
@@ -26,27 +36,43 @@ function readLiteral(source, pattern, label) {
   return matches[0].slice(1).map(value => `${value}f`);
 }
 
-function render({shader, debrisShader, profiles, shapes, funnel, template}) {
+function render({shader, debrisShader, profiles, shapes, funnel, template, weather, volume, smoke}) {
   if (!shader.trim() || !debrisShader.trim()) throw new Error('A canonical storm shader is empty.');
   const ratingBlock = profiles.match(/ForRating\( int rating \) => rating switch\s*\{([^}]*)\}/)?.[1] ?? '';
-  const [ropeWidth, ropeHeight] = readLiteral(ratingBlock, `^\\s*1\\s*=>\\s*${pair}`, 'rating 1');
-  const [coneWidth, coneHeight] = readLiteral(ratingBlock, `^\\s*2\\s*=>\\s*${pair}`, 'rating 2');
-  const [, wedgeHeight] = readLiteral(ratingBlock, `^\\s*_\\s*=>\\s*${pair}`, 'rating 5 (default)');
+  const ratings = ['<=\\s*0', '1', '2', '3', '4', '_'].map((key, rating) =>
+    readLiteral(ratingBlock, `^\\s*${key}\\s*=>\\s*${pair}`, `rating ${rating}`));
   const rope = readLiteral(shapes, `StormFunnelShape\\.Rope\\s*=>\\s*${sections}`, 'Rope shape');
   const cone = readLiteral(shapes, `^\\s*_\\s*=>\\s*${sections}`, 'default Cone shape');
   const wedge = readLiteral(shapes, `WalkInWedge\\s*=>\\s*${sections}`, 'WalkInWedge shape');
+  const extraShapes = ['VShape', 'Cylinder', 'Hourglass'].map(key =>
+    readLiteral(shapes, `StormFunnelShape\\.${key}\\s*=>\\s*${sections}`, `${key} shape`));
   const [openCore] = readLiteral(funnel, `OpenCoreRadius\\s*=>\\s*${num}\\s*\\*\\s*WedgeScale`, 'Wedge eye radius');
   if (template.split(marker).length !== 2) throw new Error('Expected one shared game profile marker in the add-on template.');
   const vector = r => `new Vector4( ${r.slice(0, 4).join(', ')} )`;
+  const shapeLookup = format => [rope, cone, wedge, ...extraShapes].map((r, shape) =>
+    shape === 1 ? '' : `        if ( Shape == ${shape} ) return ${format(r)};\n`).join('') + `        return ${format(cone)};`;
+  const profileLookup = (column, key) => ratings.slice(0, 5).map((values, rating) =>
+    `        if ( ${key} ${rating === 0 ? '<=' : '=='} ${rating} ) return ${values[column]};`).join('\n');
+  const noise = bakeFunnelNoise(volume);
+  const dust = bakeSmoke(smoke);
   const shared = [
     '    // Shared profile values generated from the Storm Chasers game sources.',
-    `    float GameHeight() => Strength >= 5 ? ${wedgeHeight} : (Strength == 1 ? ${ropeHeight} : ${coneHeight});`,
-    `    float GameWidthScale() => Strength == 1 ? ${ropeWidth} : ${coneWidth};`,
-    `    Vector4 GameRadii() => Strength >= 5 ? ${vector(wedge)} : (Strength == 1 ? ${vector(rope)} : ${vector(cone)});`,
-    `    float GameTopRadius() => Strength >= 5 ? ${wedge[4]} : (Strength == 1 ? ${rope[4]} : ${cone[4]});`,
+    `    const int FunnelNoiseSize = ${noise.size};`,
+    `    const int DustMaskSize = ${dust.size};`,
+    `    const int DustMaskCount = ${dust.masks.length};`,
+    `    float GameHeight()\n    {\n${profileLookup(1, 'Strength')}\n        return ${ratings[5][1]};\n    }`,
+    '    float GameWidthScale() => GameWidthForRating( Strength );',
+    `    float GameWidthForRating( int rating )\n    {\n${profileLookup(0, 'rating')}\n        return ${ratings[5][0]};\n    }`,
+    `    const float GameF5WidthScale = ${ratings[5][0]};`,
+    `    Vector4 GameRadii()\n    {\n${shapeLookup(vector)}\n    }`,
+    `    float GameTopRadius()\n    {\n${shapeLookup(r => r[4])}\n    }`,
     `    float GameOpenCore() => ${openCore};`,
   ].join('\n');
-  return {shader, debrisShader, script: '// Generated by tools/sync-storm-disasters.cjs; edit the template or game sources instead.\n' + template.replace(marker, shared)};
+  if (!weather?.trim() || template.split(weatherMarker).length !== 2) throw new Error('Expected a weather template and one insertion marker.');
+  if (template.split(groundMarker).length !== 2) throw new Error('Expected one ground effects marker.');
+  const script = template.replace(marker, shared).replace(weatherMarker, weather.trimEnd()).replace(groundMarker, adaptGroundEffects(funnel));
+  return {shader, debrisShader, noise: JSON.stringify(noise.rgba.toString('base64')) + '\n', dust: dust.masks,
+    script: '// Generated by tools/sync-storm-disasters.cjs; edit the templates or game sources instead.\n' + script};
 }
 
 function main(args) {
@@ -54,13 +80,18 @@ function main(args) {
   const root = path.resolve(__dirname, '..');
   const built = render(Object.fromEntries(Object.entries(sources).map(([key, file]) => [key, fs.readFileSync(path.join(root, file), 'utf8')])));
   const stale = [];
-  for (const [key, file] of Object.entries(outputs)) {
+  const files = Object.entries(outputs).map(([key, file]) => [file, built[key]]);
+  files.push(['Addons/StormDisasters/Assets/storm_disasters/funnel_density.txt', built.noise]);
+  for (const [i, mask] of built.dust.entries()) files.push([`Addons/StormDisasters/Assets/storm_disasters/dust_mask_${i}.txt`, mask]);
+  for (const [file, content] of presetFiles()) files.push([`Addons/StormDisasters/Assets/${file}`, content]);
+  for (const [file, content] of weatherAssets()) files.push([`Addons/StormDisasters/Assets/${file}`, content]);
+  for (const [file, content] of files) {
     const target = path.join(root, file);
-    if (fs.existsSync(target) && fs.readFileSync(target, 'utf8') === built[key]) continue;
+    if (fs.existsSync(target) && fs.readFileSync(target).equals(Buffer.from(content))) continue;
     if (args.length) stale.push(file);
     else {
       fs.mkdirSync(path.dirname(target), {recursive: true});
-      fs.writeFileSync(target, built[key]);
+      fs.writeFileSync(target, content);
       console.log(`Synced ${file}`);
     }
   }

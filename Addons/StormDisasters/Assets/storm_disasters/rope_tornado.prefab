@@ -3,11 +3,11 @@
     "__guid": "a8a84f8d-f425-4da9-9189-0d163a53d74e",
     "__version": 2,
     "Flags": 0,
-    "Name": "Rope Tornado",
+    "Name": "Rope Tornado (F1)",
     "Position": "0,0,0",
     "Rotation": "0,0,0,1",
     "Scale": "1,1,1",
-    "Tags": "storm_disaster_tornado",
+    "Tags": "storm_disaster_tornado,storm_disasters_rating_f1",
     "Enabled": true,
     "NetworkMode": 2,
     "NetworkFlags": 0,
@@ -20,7 +20,8 @@
         "__guid": "7012b856-8cfd-48a5-abb5-4754a0c5bf9a",
         "__enabled": true,
         "Flags": 0,
-        "Strength": 1
+        "Strength": 1,
+        "Shape": 0
       }
     ],
     "Children": []

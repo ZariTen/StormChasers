@@ -1,8 +1,8 @@
 {
   "Prefab": "storm_disasters/wedge_tornado.prefab",
-  "Title": "Wedge Tornado",
+  "Title": "Wedge Tornado (F5)",
   "Description": "A wide, dark funnel with a low dust skirt. Visual only; use Sandbox undo to remove it.",
-  "Category": "Disasters",
+  "Category": "Tornadoes",
   "__references": [],
   "__version": 0
 }

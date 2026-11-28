@@ -1,0 +1,32 @@
+{
+  "RootObject": {
+    "__guid": "0a365702-997f-8f33-aa7b-66d351ba0a4d",
+    "__version": 2,
+    "Flags": 0,
+    "Name": "V-shaped Tornado (F1)",
+    "Position": "0,0,0",
+    "Rotation": "0,0,0,1",
+    "Scale": "1,1,1",
+    "Tags": "storm_disaster_tornado,storm_disasters_rating_f1",
+    "Enabled": true,
+    "NetworkMode": 2,
+    "NetworkFlags": 0,
+    "NetworkOrphaned": 0,
+    "NetworkTransmit": true,
+    "OwnerTransfer": 1,
+    "Components": [
+      {
+        "__type": "StormDisasterFunnel",
+        "__guid": "9b38adde-cc3d-8215-a342-ac27a1ddef8b",
+        "__enabled": true,
+        "Flags": 0,
+        "Strength": 1,
+        "Shape": 3
+      }
+    ],
+    "Children": []
+  },
+  "ResourceVersion": 3,
+  "__references": [],
+  "__version": 3
+}

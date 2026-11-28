@@ -3,11 +3,11 @@
     "__guid": "8c83a640-8264-4de9-abe6-0d9db3a067b3",
     "__version": 2,
     "Flags": 0,
-    "Name": "Funnel Tornado",
+    "Name": "Cone Tornado (F2)",
     "Position": "0,0,0",
     "Rotation": "0,0,0,1",
     "Scale": "1,1,1",
-    "Tags": "storm_disaster_tornado",
+    "Tags": "storm_disaster_tornado,storm_disasters_rating_f2",
     "Enabled": true,
     "NetworkMode": 2,
     "NetworkFlags": 0,
@@ -20,7 +20,8 @@
         "__guid": "5427a1ab-f3cb-47a1-b6e8-9a0549dea18a",
         "__enabled": true,
         "Flags": 0,
-        "Strength": 2
+        "Strength": 2,
+        "Shape": 1
       }
     ],
     "Children": []

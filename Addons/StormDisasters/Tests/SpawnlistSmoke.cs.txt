@@ -1,0 +1,31 @@
+var scene = Game.ActiveScene;
+if (!scene.GetAllComponents<MapInstance>().Any(x => x.MapName == "facepunch.flatgrass"))
+    throw new Exception("Expected stock Flatgrass.");
+const string path = "storm_disasters/tornadoes.spawn";
+if (!ResourceLibrary.TryGet<GameResource>(path, out var list) || list.GetType().Name != "SpawnlistResource")
+    throw new Exception($"Spawnlist not registered: {path}");
+var type = list.GetType();
+var visible = ((System.Collections.IEnumerable)type.GetMethod("GetVisible").Invoke(null, null)).Cast<object>();
+if (!visible.Contains(list)) throw new Exception("Tornadoes does not appear among the visible native spawnlists.");
+var data = type.GetMethod("ToData").Invoke(list, null);
+var rows = ((System.Collections.IEnumerable)data.GetType().GetProperty("Items").GetValue(data)).Cast<object>().ToArray();
+var names = new[] { "Rope", "Cone", "Wedge", "V-shaped", "Cylinder", "Hourglass" };
+if (rows.Length != names.Length * 7) throw new Exception($"Unexpected spawnlist row count {rows.Length}.");
+foreach (var (name, index) in names.Select((name, index) => (name, index)))
+{
+    var header = rows[index * 7];
+    var rowType = header.GetType();
+    if ((string)rowType.GetProperty("Title").GetValue(header) != name || !(bool)rowType.GetProperty("IsFullRow").GetValue(header))
+        throw new Exception($"Expected a full-row heading for {name}.");
+    for (var rating = 0; rating <= 5; rating++)
+    {
+        var item = rows[index * 7 + 1 + rating];
+        var title = (string)rowType.GetProperty("Title").GetValue(item);
+        var ident = (string)rowType.GetProperty("Ident").GetValue(item);
+        if (title != $"{name} Tornado (F{rating})" || !ident.StartsWith("entity:") ||
+            !ResourceLibrary.TryGet<GameResource>(ident[7..], out var entity) || entity.GetType().Name != "ScriptedEntity" ||
+            (string)entity.GetType().GetProperty("Category").GetValue(entity) != "Tornadoes")
+            throw new Exception($"Invalid spawnlist entry: {title} ({ident}).");
+    }
+}
+return new { List = "Tornadoes", Visible = true, Headings = names, SpawnTiles = rows.Length - names.Length };

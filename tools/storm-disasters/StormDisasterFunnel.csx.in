@@ -2,29 +2,36 @@
 public sealed class StormDisasterFunnel : Component
 {
     [Property] public int Strength { get; set; } = 2;
+    [Property] public int Shape { get; set; } = 1; // Rope, Cone, Wedge, V-shaped, Cylinder, Hourglass
+    [Property] public float Lifetime { get; set; } = 150f;
     const int FallbackCount = 48;
-    const int DustCount = 36;
     SpriteRenderer[] puffs = new SpriteRenderer[FallbackCount + DustCount];
-    const int FragmentCount = 40;
     ModelRenderer[] fragments = new ModelRenderer[FragmentCount];
     GameObject visuals;
     GameObject debris;
     ModelRenderer volume;
     Texture noise;
     int start;
+    float travelAge;
+    float heading;
+    float routePhase;
+    float formedAt;
 
-    // Flatgrass presets are scaled down uniformly from the game-sized storms.
-    const float DisplayScale = 0.15f;
     /* SHARED_GAME_PROFILE */
 
     protected override void OnStart()
     {
+        weatherEligible = true;
+        formedAt = Time.Now;
+        var spawn = WorldPosition;
+        routePhase = Wrap( MathF.Sin( spawn.x * 0.014f + spawn.y * 0.021f ) * 47.31f ) * MathF.Tau;
+        heading = routePhase;
         // A material asset gives s&box a shader compile dependency. Do not cache
         // an anonymous material while the shader is still compiling on first boot.
         var material = Material.Load( "storm_disasters/funnel_volume.vmat" );
-        if ( material != null && material.IsValid && !material.IsError && material.Shader.IsValid && !material.Shader.IsError )
+        if ( material != null && material.IsValid && !material.IsError && material.Shader.IsValid && !material.Shader.IsError ) noise = CreateNoise();
+        if ( noise != null && noise.IsValid && !noise.IsError )
         {
-            if ( noise == null ) noise = CreateNoise();
             var proxy = MakeVisual( GameObject, "Condensation Volume" );
             volume = proxy.Components.Create<ModelRenderer>();
             volume.Model = Model.Load( "models/dev/box.vmdl" );
@@ -34,19 +41,24 @@ public sealed class StormDisasterFunnel : Component
             start = FallbackCount;
         }
         var smoke = Sprite.FromTexture( Texture.Load( "textures/particles/smoke/smoke_static_a.vtex" ) );
-        var dustA = CreateDustMask( 79 );
-        var dustB = CreateDustMask( 206 );
+        var masks = new Sprite[DustMaskCount];
+        for ( int i = 0; i < masks.Length; i++ ) masks[i] = LoadDustMask( i, smoke );
         visuals = MakeVisual( GameObject, "Tornado smoke" );
         for ( int i = start; i < puffs.Length; i++ )
         {
             var sprite = MakeVisual( visuals, "Smoke puff" ).Components.Create<SpriteRenderer>();
-            sprite.Sprite = i < FallbackCount ? smoke : (i % 2 == 0 ? dustA : dustB);
+            sprite.Sprite = i < FallbackCount ? smoke : masks[(i - FallbackCount) % masks.Length];
             sprite.Billboard = SpriteRenderer.BillboardMode.Always;
             sprite.Opaque = false;
             sprite.Lighting = false;
             sprite.IsSorted = true;
             sprite.AlphaCutoff = 0.008f;
-            sprite.DepthFeather = i >= FallbackCount ? 35f : 18f;
+            sprite.DepthFeather = i >= FallbackCount ? 48f : 18f;
+            if ( i >= FallbackCount )
+            {
+                sprite.CameraFadeNear = 4f;
+                sprite.CameraFadeFar = 20f;
+            }
             sprite.FogStrength = 0.48f;
             puffs[i] = sprite;
         }
@@ -65,11 +77,40 @@ public sealed class StormDisasterFunnel : Component
 
     protected override void OnUpdate()
     {
+        // Only the owning peer steers the Sandbox spawn; proxies follow its transform.
+        if ( formedAt <= 0f ) formedAt = Time.Now;
+        if ( !IsProxy && Time.Now - formedAt >= Duration() )
+        {
+            GameObject.Destroy();
+            return;
+        }
+        if ( !IsProxy ) UpdateTravel();
         if ( visuals != null && visuals.IsValid ) UpdateFunnel();
+        UpdateWeather();
+    }
+
+    void UpdateTravel()
+    {
+        float dt = MathF.Min( Time.Delta, 0.1f );
+        travelAge += dt;
+        float speed = 76f + 20f * MathF.Sin( travelAge * 0.23f + routePhase );
+        float turn = 0.065f + 0.045f * MathF.Sin( travelAge * 0.16f + routePhase );
+        heading += turn * dt;
+        var next = WorldPosition + new Vector3( MathF.Cos( heading ), MathF.Sin( heading ), 0f ) * (speed * dt);
+        var ground = Scene.Trace.Ray( next + Vector3.Up * 64f, next - Vector3.Up * 128f )
+            .WithoutTags( "player", "trigger" ).Run();
+        if ( !ground.Hit || ground.Normal.z < 0.65f )
+        {
+            // Bend back toward solid ground instead of drifting over the edge.
+            heading += 1.8f * dt;
+            return;
+        }
+        WorldPosition = ground.HitPosition + Vector3.Up;
     }
 
     protected override void OnDisabled()
     {
+        StopWeather();
         if ( visuals != null && visuals.IsValid ) visuals.Enabled = false;
         if ( debris != null && debris.IsValid ) debris.Enabled = false;
         if ( volume != null && volume.IsValid ) volume.Enabled = false;
@@ -82,43 +123,18 @@ public sealed class StormDisasterFunnel : Component
         if ( volume != null && volume.IsValid ) volume.Enabled = true;
     }
 
-    Sprite CreateDustMask( int seed )
-    {
-        // Match the game's warped, multi-scale smoke mask rather than reusing one wispy decal.
-        int size = 24;
-        var data = new byte[size * size * 4];
-        for ( int y = 0; y < size; y++ )
-        for ( int x = 0; x < size; x++ )
-        {
-            float u = (x + 0.5f) * 2f / size - 1f;
-            float v = (y + 0.5f) * 2f / size - 1f;
-            float warpX = (DustNoise( u * 2.5f, v * 2.5f, seed + 8 ) - 0.5f) * 0.52f;
-            float warpY = (DustNoise( u * 2.5f + 20f, v * 2.5f, seed + 19 ) - 0.5f) * 0.46f;
-            float detail = 0.58f * DustNoise( (u + warpX) * 4.1f, (v + warpY) * 4.1f, seed )
-                + 0.30f * DustNoise( u * 9.4f + warpY, v * 9.4f, seed + 29 )
-                + 0.12f * DustNoise( u * 21f, v * 21f, seed + 43 );
-            float radial = MathF.Sqrt( u * u + v * v );
-            float contour = Fade( (1.04f - radial + (detail - 0.52f) * 0.58f) / 0.66f );
-            float border = MathF.Min( 1f, (1f - MathF.Max( MathF.Abs( u ), MathF.Abs( v ) )) * 7f );
-            int i = (y * size + x) * 4;
-            byte shade = (byte)((0.62f + 0.28f * detail - 0.08f * v) * 255f);
-            data[i] = shade;
-            data[i + 1] = shade;
-            data[i + 2] = shade;
-            data[i + 3] = (byte)(255f * contour * border * (0.44f + 0.56f * detail));
-        }
-        string name = seed == 79 ? "storm_disasters/dust_a" : "storm_disasters/dust_b";
-        return Sprite.FromTexture( Texture.Create( size, size, ImageFormat.RGBA8888 ).WithName( name ).WithData( data ).Finish() );
-    }
+    protected override void OnDestroy() => StopWeather();
 
-    float DustNoise( float x, float y, int seed )
+    /* STORM_WEATHER */
+
+    Sprite LoadDustMask( int variant, Sprite fallback )
     {
-        int ix = (int)MathF.Floor( x );
-        int iy = (int)MathF.Floor( y );
-        float a = Smooth( x - ix );
-        float b = Smooth( y - iy );
-        return Mix( Mix( Seed( ix * 127 + iy * 311 + seed * 73 ), Seed( (ix + 1) * 127 + iy * 311 + seed * 73 ), a ),
-            Mix( Seed( ix * 127 + (iy + 1) * 311 + seed * 73 ), Seed( (ix + 1) * 127 + (iy + 1) * 311 + seed * 73 ), a ), b );
+        string name = "storm_disasters/dust_mask_" + variant;
+        string path = name + ".txt";
+        if ( !FileSystem.Mounted.FileExists( path ) ) return fallback;
+        var data = Json.Deserialize<byte[]>( FileSystem.Mounted.ReadAllText( path ) );
+        if ( data == null || data.Length != DustMaskSize * DustMaskSize * 4 ) return fallback;
+        return Sprite.FromTexture( Texture.Create( DustMaskSize, DustMaskSize, ImageFormat.RGBA8888 ).WithName( name ).WithData( data ).Finish() );
     }
 
     void CreateDebris()
@@ -133,13 +149,14 @@ public sealed class StormDisasterFunnel : Component
         for ( int i = 0; i < fragments.Length; i++ )
         {
             var piece = MakeVisual( debris, "Flying fragment" ).Components.Create<ModelRenderer>();
-            piece.Model = i % 8 == 0 ? box : (i % 3 == 0 ? splinter : (i % 3 == 1 ? sheet : shard));
+            bool heavy = i % 4 == 0;
+            piece.Model = heavy ? (i % 8 == 0 ? box : sheet) : (i % 3 == 0 ? splinter : (i % 3 == 1 ? sheet : shard));
             piece.RenderType = ModelRenderer.ShadowRenderType.Off;
             if ( material != null && material.IsValid && !material.IsError && material.Shader.IsValid && !material.Shader.IsError )
                 piece.MaterialOverride = material;
-            float shade = 0.021f + 0.056f * Seed( i );
-            piece.Tint = new Color( shade, shade, shade, 1f );
-            piece.Attributes.Set( "FragmentColor", new Vector3( shade, shade * 0.89f, shade * 0.74f ) );
+            float shade = 0.038f + (heavy ? 0.105f : 0.068f) * SurfaceSeed( i + 424 );
+            piece.Tint = new Color( shade * 1.08f, shade, shade * 0.88f, 1f );
+            piece.Attributes.Set( "FragmentColor", new Vector3( shade * 0.30f, shade * 0.25f, shade * 0.19f ) );
             fragments[i] = piece;
         }
     }
@@ -181,43 +198,13 @@ public sealed class StormDisasterFunnel : Component
 
     Texture CreateNoise()
     {
-        int n = 16;
-        var data = new byte[n * n * n * 4];
-        for ( int z = 0; z < n; z++ )
-        for ( int y = 0; y < n; y++ )
-        for ( int x = 0; x < n; x++ )
-        {
-            int i = ((z * n + y) * n + x) * 4;
-            data[i] = (byte)(255f * TileNoise( x, y, z, 4, 0.71f ));
-            data[i + 1] = (byte)(255f * TileNoise( x, y, z, 8, 1.63f ));
-            data[i + 2] = (byte)(255f * Node( x, y, z, 16, 3.97f ));
-            data[i + 3] = (byte)255;
-        }
-        return Texture.CreateVolume( n, n, n, ImageFormat.RGBA8888 ).WithName( "storm_disasters/funnel_density" ).WithData( data ).Finish();
-    }
-
-    float TileNoise( int x, int y, int z, int cells, float seed )
-    {
-        int step = 16 / cells;
-        int a = x / step;
-        int b = y / step;
-        int c = z / step;
-        float u = Smooth( (x % step) / (float)step );
-        float v = Smooth( (y % step) / (float)step );
-        float w = Smooth( (z % step) / (float)step );
-        return Mix( Layer( a, b, c, cells, seed, u, v ), Layer( a, b, c + 1, cells, seed, u, v ), w );
-    }
-
-    float Layer( int a, int b, int c, int cells, float seed, float u, float v )
-    {
-        return Mix( Mix( Node( a, b, c, cells, seed ), Node( a + 1, b, c, cells, seed ), u ),
-            Mix( Node( a, b + 1, c, cells, seed ), Node( a + 1, b + 1, c, cells, seed ), u ), v );
-    }
-
-    float Node( int a, int b, int c, int cells, float seed )
-    {
-        float wave = MathF.Sin( (a % cells) * 12.9898f + (b % cells) * 78.233f + (c % cells) * 39.425f + seed ) * 43758.5453f;
-        return wave - MathF.Floor( wave );
+        const string asset = "storm_disasters/funnel_density.txt";
+        if ( !FileSystem.Mounted.FileExists( asset ) ) return null;
+        // The standalone algorithm is baked before launch; avoid running its voxel loop in Breen.
+        var data = Json.Deserialize<byte[]>( FileSystem.Mounted.ReadAllText( asset ) );
+        const int n = FunnelNoiseSize;
+        if ( data == null || data.Length != n * n * n * 4 ) return null;
+        return Texture.CreateVolume( n, n, n, ImageFormat.RGBA8888 ).WithName( "storm_disasters/funnel_density_canonical" ).WithData( data ).Finish();
     }
 
     float Smooth( float x ) => x * x * (3f - 2f * x);
@@ -225,20 +212,40 @@ public sealed class StormDisasterFunnel : Component
     float Wrap( float x ) => x - MathF.Floor( x );
     float Seed( int i ) => Wrap( MathF.Sin( i * 115.37f + 5.64f ) * 912.376f );
     float Mix( float a, float b, float t ) => a + (b - a) * t;
-    float AxisX( float t, float h, float bend ) => MathF.Sin( t * 0.62f + h * 5f ) * h * bend;
-    float AxisY( float t, float h, float bend ) => MathF.Cos( t * 0.57f + h * 4f ) * h * bend;
+    Vector3 FunnelAxis( float t, float h, float groundScale, float rope )
+    {
+        float bend = MathF.Sin( 4.2f * h - t * 0.65f );
+        var axis = new Vector3( h * (bend * 222f - 65f), h * h * 400f + MathF.Sin( 0.42f * t + h * 6.2f ) * 102f * h, 0f );
+        if ( Shape == 2 ) return axis * 0.42f;
+        float wave = MathF.Sin( h * MathF.Tau ) * MathF.Sin( h * MathF.PI ) * (0.85f + 0.15f * MathF.Sin( t * 0.66f ));
+        axis += new Vector3( 180f, -640f, 0f ) * ((rope + (Shape == 0 ? 0.94f : 0f)) * wave);
+        if ( Shape == 4 ) axis += new Vector3( 175f, -315f, 0f ) * (MathF.Sin( h * MathF.PI ) * (0.66f + 0.34f * MathF.Cos( t * 0.28f )));
+        return axis * groundScale;
+    }
 
     void UpdateFunnel()
     {
-        float height = GameHeight() * DisplayScale;
-        float width = (Strength >= 5 ? 1f : GameWidthScale()) * DisplayScale;
+        float height = GameHeight();
+        float t = MathF.Max( 0f, Time.Now - formedAt );
+        float duration = Duration();
+        float phaseScale = MathF.Min( 24f, duration );
+        float progress = t / phaseScale;
+        float remaining = (duration - t) / phaseScale;
+        float cloudLife = Fade( progress / 0.10f ) * Fade( remaining / 0.09f );
+        float condensation = Fade( progress / 0.095f ) * Fade( remaining / 0.10f );
+        float circulation = Fade( progress / 0.055f ) * Fade( remaining / 0.095f );
+        float rope = Fade( (0.29f - remaining) / 0.24f );
+        float visibleFloor = Shape == 2 ? 0.34f * (1f - Fade( progress / 0.20f )) + 0.20f * rope
+            : 0.83f * (1f - Fade( progress / 0.31f )) + 0.505f * rope;
+        float groundScale = MathF.Sqrt( GameWidthScale() );
+        // The walk-in wedge radii are already game-sized at F5.
+        float wedgeScale = GameWidthScale() / GameF5WidthScale;
+        float width = Shape == 2 ? wedgeScale : GameWidthScale() * (1f - 0.29f * rope);
         var radii = GameRadii() * width;
         float top = GameTopRadius() * width;
         float baseRadius = radii.x;
         float flare = top - baseRadius;
-        float bend = Strength == 1 ? 62f : (Strength >= 5 ? 26f : 48f);
-        float t = Time.Now;
-        if ( volume != null && volume.IsValid ) UpdateVolume( t, height, radii, top, bend );
+        if ( volume != null && volume.IsValid ) UpdateVolume( t, height, radii, top, groundScale, wedgeScale, rope, cloudLife, condensation, visibleFloor );
         // Hot reload retains old instance fields; only fresh spawns own the new pools.
         if ( puffs.Length != FallbackCount + DustCount || debris == null || fragments.Length != FragmentCount ) return;
         for ( int i = start; i < FallbackCount; i++ )
@@ -248,55 +255,15 @@ public sealed class StormDisasterFunnel : Component
             float radius = SampleRadii( radii, top, h );
             float size = baseRadius * 0.95f + 38f + flare * h * h;
             var puff = puffs[i];
-            puff.GameObject.LocalPosition = new Vector3( MathF.Cos( a ) * radius + AxisX( t, h, bend ), MathF.Sin( a ) * radius + AxisY( t, h, bend ), 12f + height * h );
+            puff.GameObject.LocalPosition = FunnelAxis( t, h, groundScale, rope ) + new Vector3( MathF.Cos( a ) * radius, MathF.Sin( a ) * radius, 12f + height * h );
             puff.Size = new Vector2( size, size * 1.28f );
-            puff.Color = new Color( 0.24f, 0.25f, 0.27f, 0.69f );
+            puff.Color = new Color( 0.24f, 0.25f, 0.27f, 0.69f * condensation * Fade( (h - visibleFloor + 0.018f) / 0.105f ) );
         }
-        UpdateDust( t, baseRadius );
-        UpdateDebris( t, height, radii, top, bend );
+        UpdateDust( t, groundScale, Shape == 2 ? 1f : 0f, wedgeScale, circulation );
+        UpdateDebris( t, height, radii, top, groundScale, rope, circulation, progress );
     }
 
-    void UpdateDust( float t, float baseRadius )
-    {
-        float scale = Strength >= 5 ? 0.29f : (Strength == 1 ? 0.19f : 0.24f);
-        for ( int i = 0; i < DustCount; i++ )
-        {
-            var puff = puffs[FallbackCount + i];
-            float v = Seed( i + 202 );
-            float cycle = Wrap( i / (float)DustCount + t * (0.14f + 0.09f * v) );
-            float angle = i * 2.399963f + t * (1.53f + 0.41f * v) + cycle * 1.45f;
-            bool skirt = i % 3 != 0;
-            float radius = (skirt ? 140f + 675f * cycle * (0.75f + 0.48f * v) : 52f + 195f * cycle) * scale;
-            radius += Strength >= 5 ? baseRadius * 0.63f : 0f;
-            float size = (skirt ? 290f + 485f * cycle + 95f * v : 260f + 220f * cycle + 90f * v) * scale;
-            float z = (skirt ? 13f + 85f * v * (1f - cycle) : 55f + 106f * v * (1f - cycle)) * scale * 1.25f;
-            puff.GameObject.WorldPosition = WorldPosition + new Vector3( MathF.Cos( angle ) * radius, MathF.Sin( angle ) * radius * 0.77f, z );
-            puff.Size = new Vector2( size, size * (skirt ? 0.38f + 0.16f * v : 0.68f + 0.16f * v) );
-            float opacity = Fade( cycle / 0.10f ) * Fade( (1f - cycle) / 0.39f );
-            float shade = (skirt ? 0.27f : 0.16f) + 0.13f * v;
-            puff.Color = new Color( shade * 1.08f, shade, shade * 0.88f, opacity * (skirt ? 0.84f : 0.94f) );
-        }
-    }
-
-    void UpdateDebris( float t, float height, Vector4 radii, float top, float bend )
-    {
-        for ( int i = 0; i < fragments.Length; i++ )
-        {
-            var piece = fragments[i].GameObject;
-            float v = Seed( i + 410 );
-            float drift = Seed( i + 517 );
-            bool heavy = i % 4 == 0;
-            float phase = Wrap( (i + 0.5f) / fragments.Length + t * (heavy ? 0.18f + 0.10f * v : 0.10f + 0.08f * v) );
-            float h = heavy ? MathF.Sin( phase * MathF.PI ) * (0.04f + 0.17f * v) : MathF.Pow( phase, 1.24f ) * (0.56f + 0.36f * v);
-            float angle = i * 2.399963f + t * (0.79f + 0.57f * v) + phase * (heavy ? 5.3f : 7.9f);
-            float radius = SampleRadii( radii, top, h ) + 22f + 47f * drift;
-            piece.WorldPosition = WorldPosition + new Vector3( AxisX( t, h, bend ) + MathF.Cos( angle ) * radius, AxisY( t, h, bend ) + MathF.Sin( angle ) * radius, 8f + h * height );
-            piece.LocalRotation = Rotation.From( new Angles( t * (100f + 195f * v) + i * 23f, t * (75f + 138f * drift), t * (100f + 175f * drift) ) );
-            float life = Fade( phase / 0.085f ) * Fade( (1f - phase) / 0.13f );
-            float length = (heavy ? 9f + 17f * v : 6f + 12f * v) * life / 50f;
-            piece.LocalScale = new Vector3( length, length * (i % 8 == 0 ? 0.38f : 0.72f + 0.48f * drift), length * (i % 8 == 0 ? 0.09f : 0.61f) );
-        }
-    }
+    /* GROUND_EFFECTS */
 
     float SampleRadii( Vector4 radii, float top, float h )
     {
@@ -307,30 +274,38 @@ public sealed class StormDisasterFunnel : Component
         return Mix( radii.w, top, k - 3f );
     }
 
-    void UpdateVolume( float t, float height, Vector4 radii, float top, float bend )
+    float Duration() => Lifetime > 0f ? MathF.Max( 1f, Lifetime ) : 150f;
+
+    void UpdateVolume( float t, float height, Vector4 radii, float top, float groundScale, float wedgeScale, float rope, float cloudLife, float condensation, float visibleFloor )
     {
-        float widest = MathF.Max( top, MathF.Max( MathF.Max( radii.x, radii.y ), MathF.Max( radii.z, radii.w ) ) );
-        float extent = widest * 1.4f + bend + 32f;
-        float cloudRadius = Strength >= 5 ? 640f : (Strength == 1 ? 170f : 340f);
-        float cloudHeight = Strength >= 5 ? 145f : 90f;
-        float fullHeight = height + cloudHeight + 55f;
-        float bounds = MathF.Max( extent, cloudRadius + bend + 10f );
-        float topX = AxisX( t, 1f, bend );
-        float topY = AxisY( t, 1f, bend );
+        var b = FunnelAxis( t, 0.25f, groundScale, rope );
+        var c = FunnelAxis( t, 0.50f, groundScale, rope );
+        var d = FunnelAxis( t, 0.75f, groundScale, rope );
+        var e = FunnelAxis( t, 1f, groundScale, rope );
+        float axisExtent = MathF.Max( MathF.Max( b.Length, c.Length ), MathF.Max( d.Length, e.Length ) );
+        bool wedge = Shape == 2;
+        float extent = top * (wedge ? 1.21f : 1.39f) + axisExtent + 95f;
+        float cloudScale = 0.78f + 0.22f * groundScale;
+        var cloudBounds = wedge ? new Vector3( 3850f, 3150f, 950f ) * MathF.Max( 0.72f, wedgeScale )
+            : new Vector3( 2460f, 1700f, 705f ) * cloudScale;
+        var cloudCenter = e + (wedge ? new Vector3( 0f, 0f, height + 180f ) : new Vector3( -215f * cloudScale, 135f * cloudScale, height + 180f ));
+        float halfX = MathF.Max( extent, MathF.Abs( cloudCenter.x ) + cloudBounds.x );
+        float halfY = MathF.Max( extent, MathF.Abs( cloudCenter.y ) + cloudBounds.y );
+        float fullHeight = MathF.Max( height * 1.11f, cloudCenter.z + cloudBounds.z );
         var origin = WorldPosition;
         volume.GameObject.WorldRotation = Rotation.Identity;
         volume.GameObject.WorldPosition = origin + new Vector3( 0f, 0f, fullHeight * 0.5f );
-        volume.GameObject.LocalScale = new Vector3( bounds * 2f, bounds * 2f, fullHeight ) / 50f;
+        volume.GameObject.LocalScale = new Vector3( halfX * 2f, halfY * 2f, fullHeight ) / 50f;
         volume.Attributes.Set( "VortexOrigin", origin );
         volume.Attributes.Set( "VortexForward", new Vector2( 1f, 0f ) );
-        volume.Attributes.Set( "VortexBounds", new Vector4( extent, fullHeight, height, Strength >= 5 ? GameOpenCore() * DisplayScale : 0f ) );
-        volume.Attributes.Set( "VortexWedge", Strength >= 5 ? 1f : 0f );
+        volume.Attributes.Set( "VortexBounds", new Vector4( extent, fullHeight, height, wedge ? GameOpenCore() * wedgeScale : 0f ) );
+        volume.Attributes.Set( "VortexWedge", wedge ? 1f : 0f );
         volume.Attributes.Set( "VortexRadii", radii );
-        volume.Attributes.Set( "VortexPhase", new Vector4( top, 0f, Strength == 1 ? 2.2f : 1.85f, t ) );
-        volume.Attributes.Set( "VortexAxisX", new Vector4( 0f, AxisX( t, 0.25f, bend ), AxisX( t, 0.5f, bend ), AxisX( t, 0.75f, bend ) ) );
-        volume.Attributes.Set( "VortexAxisY", new Vector4( 0f, AxisY( t, 0.25f, bend ), AxisY( t, 0.5f, bend ), AxisY( t, 0.75f, bend ) ) );
-        volume.Attributes.Set( "VortexTop", new Vector2( topX, topY ) );
-        volume.Attributes.Set( "StormCloudCenter", new Vector3( topX, topY, height + 30f ) );
-        volume.Attributes.Set( "StormCloudBounds", new Vector4( cloudRadius, cloudRadius * 0.76f, cloudHeight, 1.5f ) );
+        volume.Attributes.Set( "VortexPhase", new Vector4( top, visibleFloor, condensation, t ) );
+        volume.Attributes.Set( "VortexAxisX", new Vector4( 0f, b.x, c.x, d.x ) );
+        volume.Attributes.Set( "VortexAxisY", new Vector4( 0f, b.y, c.y, d.y ) );
+        volume.Attributes.Set( "VortexTop", new Vector2( e.x, e.y ) );
+        volume.Attributes.Set( "StormCloudCenter", cloudCenter );
+        volume.Attributes.Set( "StormCloudBounds", new Vector4( cloudBounds.x, cloudBounds.y, cloudBounds.z, cloudLife ) );
     }
 }

@@ -1,0 +1,8 @@
+{
+  "Prefab": "storm_disasters/hourglass_tornado_f4.prefab",
+  "Title": "Hourglass Tornado (F4)",
+  "Description": "A funnel with a pinched waist and flared ends. Visual only; use Sandbox undo to remove it.",
+  "Category": "Tornadoes",
+  "__references": [],
+  "__version": 0
+}

@@ -1,0 +1,54 @@
+var scene = Game.ActiveScene;
+if (!scene.GetAllComponents<MapInstance>().Any(m => m.MapName == "facepunch.flatgrass")) throw new Exception("Expected Flatgrass.");
+const string tag = "storm_disasters_weather";
+GameObject[] ActiveWeather() => scene.GetAllObjects(true).Where(x => x.IsValid() && x.Name == "Storm Disasters Weather" && x.Tags.Has(tag)).ToArray();
+if (ActiveWeather().Length != 0 || scene.GetAllObjects(true).Any(x => x.Tags.Has("storm_disaster_tornado"))) throw new Exception("Run with no other tornadoes spawned.");
+var prefab = GameObject.GetPrefab("storm_disasters/funnel_tornado.prefab");
+var camera = scene.Camera;
+if (!camera.IsValid()) throw new Exception("Expected a local camera.");
+var ground = scene.Trace.Ray(camera.WorldPosition + Vector3.Forward * 340, camera.WorldPosition + Vector3.Forward * 340 + Vector3.Down * 1500).WithoutTags("player").Run();
+var first = prefab.Clone(ground.Hit ? ground.HitPosition : new Vector3(-1400, 1800, 16));
+first.NetworkMode = NetworkMode.Never;
+GameObject second = null;
+try
+{
+    await Task.Delay(2600, cancellationToken);
+    var weather = ActiveWeather().SingleOrDefault() ?? throw new Exception("Spawning a tornado did not start client-local weather.");
+    var decks = weather.Children.Where(x => x.Name.StartsWith("Cloud Layer")).Select(x => x.GetComponent<SpriteRenderer>()).ToArray();
+    if (decks.Length != 4 || decks.Any(x => !x.IsValid() || !x.Enabled || x.Sprite == null || x.Size.x < 30000 || x.Color.a < .1f))
+        throw new Exception("Expected four visible map-wide overcast layers.");
+    var rainPool = weather.Children.Single(x => x.Name == "Nearby Rain").Children;
+    var poolSize = rainPool.Count;
+    var rain = rainPool.Select(x => x.GetComponent<SpriteRenderer>()).Where(x => x.IsValid()).ToArray();
+    if (!rain.Any(x => x.IsValid() && x.Enabled && x.Sprite != null && x.Color.a > .01f)) throw new Exception("No animated rain near the outdoor camera.");
+    var drop = rain.First(x => x.Enabled);
+    var before = drop.WorldPosition;
+    await Task.Delay(140, cancellationToken);
+    if (drop.WorldPosition == before) throw new Exception("Rain did not move.");
+    if (!weather.Tags.Has("storm_disasters_audio_live")) throw new Exception("Weather loops did not start.");
+    await Task.Delay(12500, cancellationToken);
+    if (!weather.Tags.Has("storm_disasters_audio_live")) throw new Exception("The weather mix stopped at the loop boundary.");
+    var eye = camera.WorldPosition;
+    var eyeGround = scene.Trace.Ray(eye, eye + Vector3.Down * 1500).WithoutTags("player").Run();
+    if (!eyeGround.Hit) throw new Exception("Expected ground directly below the camera.");
+    first.WorldPosition = eyeGround.HitPosition + Vector3.Forward * 2000;
+    second = GameObject.GetPrefab("storm_disasters/wedge_tornado.prefab").Clone(eyeGround.HitPosition);
+    second.NetworkMode = NetworkMode.Never;
+    await Task.Delay(650, cancellationToken);
+    if (ActiveWeather().Length != 1) throw new Exception("A second tornado duplicated the weather.");
+    if (ActiveWeather()[0] != weather || !second.Tags.Has("storm_disasters_wedge") || !second.Tags.Has("storm_disasters_rating_f5")) throw new Exception("Expected the cone to own weather with a tagged F5 wedge nearby.");
+    var eyeRain = rainPool.Select(x => x.GetComponent<SpriteRenderer>()).Count(x => x.IsValid() && x.Enabled);
+    if (eyeRain >= rain.Length * 0.65f) throw new Exception($"The nearby wedge eye did not reduce rain while the cone owned weather ({eyeRain} vs {rain.Length} drops).");
+    first.Destroy();
+    await Task.Delay(1050, cancellationToken);
+    if (ActiveWeather().Length != 1) throw new Exception("Weather did not follow the remaining tornado.");
+    second.Destroy();
+    await Task.Delay(350, cancellationToken);
+    if (ActiveWeather().Length != 0) throw new Exception("Weather lingered after the last tornado was removed.");
+    return new { CloudLayers = decks.Length, RainPool = poolSize, VisibleRain = rain.Length, WedgeEyeRain = eyeRain, AudioPastLoopBoundary = true, MultipleTornadoes = true, Cleanup = true };
+}
+finally
+{
+    if (first.IsValid()) first.Destroy();
+    if (second.IsValid()) second.Destroy();
+}

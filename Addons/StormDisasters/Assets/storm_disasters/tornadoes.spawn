@@ -1,0 +1,214 @@
+{
+  "Title": "Tornadoes",
+  "Description": "Storm Disasters tornadoes grouped by shape, with F0–F5 presets.",
+  "Icon": "cyclone",
+  "HideInSidebar": false,
+  "Items": [
+    {
+      "Kind": "Title",
+      "Title": "Rope"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/rope_tornado_f0.sent",
+      "Title": "Rope Tornado (F0)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/rope_tornado.sent",
+      "Title": "Rope Tornado (F1)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/rope_tornado_f2.sent",
+      "Title": "Rope Tornado (F2)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/rope_tornado_f3.sent",
+      "Title": "Rope Tornado (F3)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/rope_tornado_f4.sent",
+      "Title": "Rope Tornado (F4)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/rope_tornado_f5.sent",
+      "Title": "Rope Tornado (F5)"
+    },
+    {
+      "Kind": "Title",
+      "Title": "Cone"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/funnel_tornado_f0.sent",
+      "Title": "Cone Tornado (F0)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/funnel_tornado_f1.sent",
+      "Title": "Cone Tornado (F1)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/funnel_tornado.sent",
+      "Title": "Cone Tornado (F2)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/funnel_tornado_f3.sent",
+      "Title": "Cone Tornado (F3)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/funnel_tornado_f4.sent",
+      "Title": "Cone Tornado (F4)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/funnel_tornado_f5.sent",
+      "Title": "Cone Tornado (F5)"
+    },
+    {
+      "Kind": "Title",
+      "Title": "Wedge"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/wedge_tornado_f0.sent",
+      "Title": "Wedge Tornado (F0)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/wedge_tornado_f1.sent",
+      "Title": "Wedge Tornado (F1)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/wedge_tornado_f2.sent",
+      "Title": "Wedge Tornado (F2)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/wedge_tornado_f3.sent",
+      "Title": "Wedge Tornado (F3)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/wedge_tornado_f4.sent",
+      "Title": "Wedge Tornado (F4)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/wedge_tornado.sent",
+      "Title": "Wedge Tornado (F5)"
+    },
+    {
+      "Kind": "Title",
+      "Title": "V-shaped"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/v_shape_tornado_f0.sent",
+      "Title": "V-shaped Tornado (F0)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/v_shape_tornado_f1.sent",
+      "Title": "V-shaped Tornado (F1)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/v_shape_tornado_f2.sent",
+      "Title": "V-shaped Tornado (F2)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/v_shape_tornado_f3.sent",
+      "Title": "V-shaped Tornado (F3)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/v_shape_tornado_f4.sent",
+      "Title": "V-shaped Tornado (F4)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/v_shape_tornado_f5.sent",
+      "Title": "V-shaped Tornado (F5)"
+    },
+    {
+      "Kind": "Title",
+      "Title": "Cylinder"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/cylinder_tornado_f0.sent",
+      "Title": "Cylinder Tornado (F0)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/cylinder_tornado_f1.sent",
+      "Title": "Cylinder Tornado (F1)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/cylinder_tornado_f2.sent",
+      "Title": "Cylinder Tornado (F2)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/cylinder_tornado_f3.sent",
+      "Title": "Cylinder Tornado (F3)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/cylinder_tornado_f4.sent",
+      "Title": "Cylinder Tornado (F4)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/cylinder_tornado_f5.sent",
+      "Title": "Cylinder Tornado (F5)"
+    },
+    {
+      "Kind": "Title",
+      "Title": "Hourglass"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/hourglass_tornado_f0.sent",
+      "Title": "Hourglass Tornado (F0)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/hourglass_tornado_f1.sent",
+      "Title": "Hourglass Tornado (F1)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/hourglass_tornado_f2.sent",
+      "Title": "Hourglass Tornado (F2)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/hourglass_tornado_f3.sent",
+      "Title": "Hourglass Tornado (F3)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/hourglass_tornado_f4.sent",
+      "Title": "Hourglass Tornado (F4)"
+    },
+    {
+      "Kind": "Item",
+      "Ident": "entity:storm_disasters/hourglass_tornado_f5.sent",
+      "Title": "Hourglass Tornado (F5)"
+    }
+  ],
+  "__references": [],
+  "__version": 0
+}

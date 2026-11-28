@@ -1,0 +1,8 @@
+{
+  "Prefab": "storm_disasters/cylinder_tornado_f5.prefab",
+  "Title": "Cylinder Tornado (F5)",
+  "Description": "A broad, nearly straight-sided column. Visual only; use Sandbox undo to remove it.",
+  "Category": "Tornadoes",
+  "__references": [],
+  "__version": 0
+}

@@ -1,0 +1,32 @@
+{
+  "RootObject": {
+    "__guid": "e737add7-1129-80ab-a949-a2de03e63abc",
+    "__version": 2,
+    "Flags": 0,
+    "Name": "Wedge Tornado (F0)",
+    "Position": "0,0,0",
+    "Rotation": "0,0,0,1",
+    "Scale": "1,1,1",
+    "Tags": "storm_disaster_tornado,storm_disasters_rating_f0,storm_disasters_wedge",
+    "Enabled": true,
+    "NetworkMode": 2,
+    "NetworkFlags": 0,
+    "NetworkOrphaned": 0,
+    "NetworkTransmit": true,
+    "OwnerTransfer": 1,
+    "Components": [
+      {
+        "__type": "StormDisasterFunnel",
+        "__guid": "6919b7d0-9d58-87fb-acea-7f03c4adfda0",
+        "__enabled": true,
+        "Flags": 0,
+        "Strength": 0,
+        "Shape": 2
+      }
+    ],
+    "Children": []
+  },
+  "ResourceVersion": 3,
+  "__references": [],
+  "__version": 3
+}

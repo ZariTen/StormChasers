@@ -1,8 +1,8 @@
 {
   "Prefab": "storm_disasters/rope_tornado.prefab",
-  "Title": "Rope Tornado",
+  "Title": "Rope Tornado (F1)",
   "Description": "A thin, winding funnel. Visual only; use Sandbox undo to remove it.",
-  "Category": "Disasters",
+  "Category": "Tornadoes",
   "__references": [],
   "__version": 0
 }

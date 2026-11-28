@@ -1,0 +1,8 @@
+{
+  "Prefab": "storm_disasters/v_shape_tornado_f2.prefab",
+  "Title": "V-shaped Tornado (F2)",
+  "Description": "A steep-sided funnel that fans out toward the cloud base. Visual only; use Sandbox undo to remove it.",
+  "Category": "Tornadoes",
+  "__references": [],
+  "__version": 0
+}

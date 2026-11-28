@@ -3,11 +3,11 @@
     "__guid": "443d5557-20dd-4e0e-b7cf-a5c7e4d9087d",
     "__version": 2,
     "Flags": 0,
-    "Name": "Wedge Tornado",
+    "Name": "Wedge Tornado (F5)",
     "Position": "0,0,0",
     "Rotation": "0,0,0,1",
     "Scale": "1,1,1",
-    "Tags": "storm_disaster_tornado",
+    "Tags": "storm_disaster_tornado,storm_disasters_rating_f5,storm_disasters_wedge",
     "Enabled": true,
     "NetworkMode": 2,
     "NetworkFlags": 0,
@@ -20,7 +20,8 @@
         "__guid": "71bc9527-1420-44e4-9cd0-75f263f553ba",
         "__enabled": true,
         "Flags": 0,
-        "Strength": 5
+        "Strength": 5,
+        "Shape": 2
       }
     ],
     "Children": []

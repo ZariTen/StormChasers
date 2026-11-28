@@ -1,0 +1,230 @@
+    // One presentation per client/scene, owned by a live tornado. Never network cloud, rain or audio objects.
+    const string WeatherTag = "storm_disasters_weather";
+    const string WeatherAssets = "storm_disasters/weather_";
+    const int RainCount = 480;
+    GameObject weather;
+    GameObject weatherFocus;
+    SpriteRenderer[] cloudDeck = new SpriteRenderer[4];
+    SpriteRenderer[] rainDrops = new SpriteRenderer[RainCount];
+    SoundFile[] stormTracks = new SoundFile[4];
+    SoundHandle[] stormSounds = new SoundHandle[4];
+    float[] mixGains = new float[4];
+    bool weatherEligible;
+    bool underCover;
+    float nextWeatherCheck;
+    float nextRoofCheck;
+    float stormOn;
+    float rainTravel;
+    float weatherAnchorZ;
+
+    void UpdateWeather()
+    {
+        if ( !weatherEligible ) return;
+        var camera = Scene.Camera;
+        if ( camera == null || !camera.IsValid ) return;
+        float t = Time.Now;
+        if ( t >= nextWeatherCheck )
+        {
+            nextWeatherCheck = t + 0.35f;
+            bool occupied = false;
+            float distance = float.MaxValue;
+            var eye = camera.WorldPosition;
+            weatherFocus = GameObject;
+            foreach ( var obj in Scene.GetAllObjects( true ) )
+            {
+                if ( obj == null || !obj.IsValid || !obj.Enabled ) continue;
+                if ( obj.Name == "Storm Disasters Weather" && obj.Tags.Has( WeatherTag ) ) occupied = true;
+                if ( obj.Tags.Has( "storm_disaster_tornado" ) && (obj.Parent == null || !obj.Parent.Tags.Has( "storm_disaster_tornado" )) )
+                {
+                    float candidate = (obj.WorldPosition - eye).WithZ( 0f ).LengthSquared;
+                    if ( candidate < distance ) { distance = candidate; weatherFocus = obj; }
+                }
+            }
+            if ( (weather == null || !weather.IsValid) && !occupied ) CreateWeather();
+        }
+        if ( weather == null || !weather.IsValid ) return;
+        var listener = camera.WorldPosition;
+        if ( t >= nextRoofCheck )
+        {
+            nextRoofCheck = t + 0.15f;
+            underCover = Scene.Trace.Ray( listener, listener + Vector3.Up * 3500f ).WithoutTags( "player", "trigger" ).Run().Hit;
+        }
+        float age = t - stormOn;
+        float strength = Fade( age / 1.8f );
+        var focus = weatherFocus != null && weatherFocus.IsValid ? weatherFocus : GameObject;
+        int rating = Strength;
+        bool wedge = Shape == 2;
+        if ( focus != GameObject )
+        {
+            wedge = focus.Tags.Has( "storm_disasters_wedge" );
+            for ( int i = 0; i <= 5; i++ )
+                if ( focus.Tags.Has( "storm_disasters_rating_f" + i ) ) { rating = i; break; }
+        }
+        float severity = rating / 5f;
+        var center = focus.WorldPosition;
+        float distanceToStorm = (listener - center).WithZ( 0f ).Length;
+        float nearStorm = 1f - Fade( distanceToStorm / 6800f );
+        float eyeRadius = GameOpenCore() * GameWidthForRating( rating ) / GameF5WidthScale;
+        float eyeReduction = wedge ? 0.87f * (1f - Fade( (distanceToStorm - eyeRadius) / 460f )) : 0f;
+        float rain = strength * (0.85f + nearStorm * (0.82f + 0.45f * severity)) * (1f - eyeReduction);
+        float gust = strength * (0.38f + 0.62f * severity) * (0.65f + 0.35f * nearStorm);
+        UpdateOvercast( age, strength, severity, center );
+        UpdateRain( age, listener, underCover ? 0f : rain, gust );
+        UpdateStormAudio( age, rain, gust, center, distanceToStorm, severity );
+    }
+
+    void CreateWeather()
+    {
+        stormOn = Time.Now;
+        weatherAnchorZ = WorldPosition.z;
+        rainTravel = 0f;
+        weather = MakeVisual( GameObject, "Storm Disasters Weather" );
+        weather.Tags.Add( WeatherTag );
+        for ( int i = 0; i < cloudDeck.Length; i++ )
+        {
+            var cloud = MakeVisual( weather, "Cloud Layer " + i ).Components.Create<SpriteRenderer>();
+            cloud.Sprite = Sprite.FromTexture( Texture.Load( WeatherAssets + "cloud_" + i + ".png" ) );
+            cloud.Billboard = SpriteRenderer.BillboardMode.None;
+            cloud.Opaque = false;
+            cloud.IsSorted = true;
+            cloud.Lighting = false;
+            cloud.FogStrength = 0.04f;
+            cloud.AlphaCutoff = 0.006f;
+            cloud.DepthFeather = 80f;
+            cloudDeck[i] = cloud;
+        }
+        var rain = MakeVisual( weather, "Nearby Rain" );
+        var sprite = Sprite.FromTexture( Texture.Load( WeatherAssets + "drop.png" ) );
+        for ( int i = 0; i < rainDrops.Length; i++ )
+        {
+            var drop = MakeVisual( rain, "Raindrop" ).Components.Create<SpriteRenderer>();
+            drop.Enabled = false;
+            drop.Sprite = sprite;
+            drop.Billboard = SpriteRenderer.BillboardMode.None;
+            drop.Opaque = false;
+            drop.IsSorted = true;
+            drop.Lighting = false;
+            drop.AlphaCutoff = 0.001f;
+            drop.DepthFeather = 4f;
+            rainDrops[i] = drop;
+        }
+        stormTracks[0] = SoundFile.Load( WeatherAssets + "wind.wav" );
+        stormTracks[1] = SoundFile.Load( WeatherAssets + "rain.wav" );
+        stormTracks[2] = SoundFile.Load( WeatherAssets + "covered.wav" );
+        stormTracks[3] = SoundFile.Load( WeatherAssets + "roar.wav" );
+    }
+
+    void UpdateOvercast( float t, float strength, float severity, Vector3 stormCenter )
+    {
+        for ( int i = 0; i < cloudDeck.Length; i++ )
+        {
+            var cloud = cloudDeck[i];
+            if ( i < 2 )
+            {
+                cloud.WorldPosition = new Vector3( MathF.Sin( t * 0.013f ) * 520f - i * 1600f, MathF.Sin( t * 0.009f ) * 710f + i * 1100f, weatherAnchorZ + 9200f + i * 1800f );
+                cloud.WorldRotation = Rotation.From( new Angles( 90f, -14f + i * 36f, 0f ) );
+                cloud.Size = new Vector2( 99000f - i * 4000f, 84000f + i * 7000f );
+                float dim = 0.11f + 0.043f * severity;
+                cloud.Color = i == 0 ? new Color( 0.30f-dim, 0.33f-dim, 0.38f-dim, 0.78f*strength )
+                    : new Color( 0.46f-dim, 0.50f-dim, 0.57f-dim, 0.80f*strength );
+            }
+            else
+            {
+                int band = i - 1;
+                float drift = MathF.Sin( t * (0.027f + 0.008f * band) + band );
+                cloud.WorldPosition = stormCenter.WithZ( 0f ) * 0.21f + new Vector3( -1000f*band + 680f*drift, 1700f-1400f*band+530f*drift, weatherAnchorZ+7200f+760f*band );
+                cloud.WorldRotation = Rotation.From( new Angles( 90f, -35f + 29f * band + 4f * drift, 0f ) );
+                cloud.Size = new Vector2( 58000f + 4600f*band, 49000f + 3300f*band ) * (1f + 0.16f*severity);
+                float tone = 0.14f + 0.067f * band - 0.027f * severity;
+                cloud.Color = new Color( tone*0.89f, tone, tone*1.15f, strength*(0.65f - band*0.065f) );
+            }
+        }
+    }
+
+    float WrapNear( float value, float center, float span ) => center + (Wrap( (value-center)/span + 0.5f )-0.5f)*span;
+
+    void UpdateRain( float t, Vector3 eye, float exposure, float gust )
+    {
+        var wind = new Vector3( 0.42f, 0.91f, 0f );
+        float speed = 320f + 465f * gust;
+        rainTravel += speed * Time.Delta;
+        float travel = rainTravel + 105f * MathF.Sin( t * 0.84f );
+        float speedAndGust = speed + 88.2f * MathF.Cos( t * 0.84f );
+        float density = MathF.Min( 1f, 0.24f + 0.45f * exposure );
+        for ( int i = 0; i < rainDrops.Length; i++ )
+        {
+            var drop = rainDrops[i];
+            float v = Seed( i + 214 );
+            if ( exposure <= 0.025f || v > density ) { drop.Enabled = false; continue; }
+            bool near = i < 360;
+            float span = near ? 660f : 1830f;
+            float height = near ? 660f : 1660f;
+            float lift = near ? 110f : 350f;
+            float fall = 850f + 600f*v;
+            float coupling = 1.15f-0.42f*v;
+            var air = wind * (coupling * travel);
+            var position = new Vector3( WrapNear( Seed( i+702 )*span+air.x, eye.x, span ), WrapNear( Seed( i+1299 )*span+air.y, eye.y, span ), WrapNear( Seed( i+1837 )*height-t*fall, eye.z+lift, height ) );
+            var delta = position-eye;
+            float distance = delta.Length;
+            float fade = near ? Fade( (distance-57f)/108f ) * Fade( (430f-distance)/155f ) : Fade( (distance-270f)/250f ) * Fade( (1060f-distance)/320f );
+            float seam = MathF.Max( MathF.Abs( delta.x ), MathF.Abs( delta.y ) );
+            fade *= Fade( (span*0.5f-seam)/(span*0.14f) ) * Fade( (height*0.5f-MathF.Abs( delta.z-lift ))/(height*0.12f) );
+            float opacity = MathF.Min( near ? 0.39f : 0.25f, exposure*(near ? 0.16f+0.14f*v : 0.08f+0.08f*v) ) * fade;
+            if ( opacity <= 0.007f ) { drop.Enabled = false; continue; }
+            var up = (Vector3.Up*fall - wind*(coupling*speedAndGust)).Normal;
+            var normal = -delta - up * Vector3.Dot( -delta, up );
+            drop.WorldPosition = position;
+            drop.WorldRotation = Rotation.LookAt( normal.LengthSquared > 0.001f ? normal.Normal : Vector3.Cross( up, Vector3.Forward ).Normal, up );
+            float shade = 0.46f + 0.24f*v;
+            drop.Size = new Vector2( near ? 1.35f+0.85f*v : 1.8f+1.2f*v, (9f+13f*v+4f*exposure)*(near ? 0.56f+0.44f*Fade( (distance-100f)/175f ) : 1f) );
+            drop.Color = new Color( shade*0.80f, shade*0.90f, shade, opacity );
+            drop.Enabled = true;
+        }
+    }
+
+    void UpdateStormAudio( float t, float rain, float gust, Vector3 center, float distance, float severity )
+    {
+        float intensity = MathF.Min( 1f, rain / 2.6f );
+        float pulse = 0.81f + 0.13f*MathF.Sin( t*0.81f ) + 0.06f*MathF.Sin( t*1.83f+0.5f );
+        int playing = 0;
+        for ( int i = 0; i < stormSounds.Length; i++ )
+        {
+            float target = i == 0 ? (0.052f + 0.54f*gust)*pulse*(underCover ? 0.30f : 1f) : i == 1 ? MathF.Pow( intensity, 1.28f )*0.65f*(underCover ? 0.06f : 1f)
+                : i == 2 ? (underCover ? intensity*0.47f : 0f) : (1f-Fade( (distance-550f)/(4800f+3600f*severity) ))*(0.68f+0.32f*severity)*(underCover ? 0.57f : 1f);
+            var handle = stormSounds[i];
+            if ( (handle == null || !handle.IsValid || handle.Finished) && stormTracks[i] != null )
+            {
+                handle = Sound.PlayFile( stormTracks[i], 0.001f, 1f, 0f, 0.22f );
+                handle.SpacialBlend = i == 3 ? 0.88f : 0f;
+                handle.DistanceAttenuation = false;
+                handle.OcclusionEnabled = false;
+                handle.ReverbEnabled = false;
+                handle.DopplerScale = 0f;
+                stormSounds[i] = handle;
+            }
+            if ( handle == null || !handle.IsValid || handle.Finished ) continue;
+            if ( handle.IsPlaying ) playing++;
+            mixGains[i] += (target-mixGains[i])*(1f-MathF.Exp( -Time.Delta*4.5f ));
+            handle.Volume = mixGains[i];
+            if ( i == 0 ) handle.Pitch = 0.93f+0.075f*gust;
+            if ( i == 3 ) { handle.Position = center + Vector3.Up*110f; handle.Pitch = 0.98f-0.17f*severity+0.025f*MathF.Sin( t*1.12f ); }
+        }
+        if ( playing == 4 ) weather.Tags.Add( "storm_disasters_audio_live" );
+        else weather.Tags.Remove( "storm_disasters_audio_live" );
+    }
+
+    void StopWeather()
+    {
+        if ( stormSounds != null )
+        {
+            for ( int i = 0; i < stormSounds.Length; i++ )
+            {
+                var handle = stormSounds[i];
+                if ( handle != null && handle.IsValid ) handle.Stop( 0.13f );
+                stormSounds[i] = null;
+                mixGains[i] = 0f;
+            }
+        }
+        if ( weather != null && weather.IsValid ) weather.Destroy();
+        weather = null;
+    }

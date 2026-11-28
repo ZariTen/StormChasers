@@ -1,0 +1,32 @@
+{
+  "RootObject": {
+    "__guid": "7e95730a-939e-8e3d-abfc-f96daab8abd6",
+    "__version": 2,
+    "Flags": 0,
+    "Name": "Cone Tornado (F4)",
+    "Position": "0,0,0",
+    "Rotation": "0,0,0,1",
+    "Scale": "1,1,1",
+    "Tags": "storm_disaster_tornado,storm_disasters_rating_f4",
+    "Enabled": true,
+    "NetworkMode": 2,
+    "NetworkFlags": 0,
+    "NetworkOrphaned": 0,
+    "NetworkTransmit": true,
+    "OwnerTransfer": 1,
+    "Components": [
+      {
+        "__type": "StormDisasterFunnel",
+        "__guid": "0f617d20-04eb-8efd-a7b7-995ba46cd035",
+        "__enabled": true,
+        "Flags": 0,
+        "Strength": 4,
+        "Shape": 1
+      }
+    ],
+    "Children": []
+  },
+  "ResourceVersion": 3,
+  "__references": [],
+  "__version": 3
+}

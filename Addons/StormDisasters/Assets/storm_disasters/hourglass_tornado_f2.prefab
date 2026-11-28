@@ -1,0 +1,32 @@
+{
+  "RootObject": {
+    "__guid": "61fb285e-a3d3-869b-a003-b39595728e12",
+    "__version": 2,
+    "Flags": 0,
+    "Name": "Hourglass Tornado (F2)",
+    "Position": "0,0,0",
+    "Rotation": "0,0,0,1",
+    "Scale": "1,1,1",
+    "Tags": "storm_disaster_tornado,storm_disasters_rating_f2",
+    "Enabled": true,
+    "NetworkMode": 2,
+    "NetworkFlags": 0,
+    "NetworkOrphaned": 0,
+    "NetworkTransmit": true,
+    "OwnerTransfer": 1,
+    "Components": [
+      {
+        "__type": "StormDisasterFunnel",
+        "__guid": "e46deb5e-615a-8982-a680-857e0f7828a8",
+        "__enabled": true,
+        "Flags": 0,
+        "Strength": 2,
+        "Shape": 5
+      }
+    ],
+    "Children": []
+  },
+  "ResourceVersion": 3,
+  "__references": [],
+  "__version": 3
+}

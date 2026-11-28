@@ -1,0 +1,8 @@
+{
+  "Prefab": "storm_disasters/funnel_tornado_f5.prefab",
+  "Title": "Cone Tornado (F5)",
+  "Description": "A classic, rotating cone. Visual only; use Sandbox undo to remove it.",
+  "Category": "Tornadoes",
+  "__references": [],
+  "__version": 0
+}

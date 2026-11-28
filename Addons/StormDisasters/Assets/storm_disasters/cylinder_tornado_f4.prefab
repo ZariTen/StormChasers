@@ -1,0 +1,32 @@
+{
+  "RootObject": {
+    "__guid": "28f710cc-9f28-8efd-abdb-3a55960f4719",
+    "__version": 2,
+    "Flags": 0,
+    "Name": "Cylinder Tornado (F4)",
+    "Position": "0,0,0",
+    "Rotation": "0,0,0,1",
+    "Scale": "1,1,1",
+    "Tags": "storm_disaster_tornado,storm_disasters_rating_f4",
+    "Enabled": true,
+    "NetworkMode": 2,
+    "NetworkFlags": 0,
+    "NetworkOrphaned": 0,
+    "NetworkTransmit": true,
+    "OwnerTransfer": 1,
+    "Components": [
+      {
+        "__type": "StormDisasterFunnel",
+        "__guid": "1653795e-c1b8-8b98-afcc-140cde058a4e",
+        "__enabled": true,
+        "Flags": 0,
+        "Strength": 4,
+        "Shape": 4
+      }
+    ],
+    "Children": []
+  },
+  "ResourceVersion": 3,
+  "__references": [],
+  "__version": 3
+}

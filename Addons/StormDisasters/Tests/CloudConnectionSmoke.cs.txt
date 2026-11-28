@@ -1,0 +1,86 @@
+// Run through the editor's run_csharp tool during stock Flatgrass Play.
+var s = Game.ActiveScene;
+if (!s.GetAllComponents<MapInstance>().Any(x => x.MapName == "facepunch.flatgrass")) throw new Exception("Expected Flatgrass.");
+var ownerAt = new Vector3(-4500, 4200, 16);
+var probeAt = new Vector3(5200, 4300, 16);
+var used = s.GetAllComponents<Prop>().Select(x => x.WorldPosition).Concat(s.GetAllComponents<PlayerController>().Select(x => x.WorldPosition)).ToArray();
+if (new[] { ownerAt, probeAt }.Any(p => used.Any(x => (x - p).WithZ(0f).Length < 3400f))) throw new Exception("Cloud probe area is occupied.");
+if (s.GetAllObjects(true).Any(x => x.Parent == null && x.Tags.Has("storm_disaster_tornado"))) throw new Exception("An existing tornado owns shared weather; leave the live tornado alone.");
+var cases = new[]
+{
+    (Prefab: "wedge_tornado", Elevation: 0f, Layer: "Cloud Layer 2"),
+    (Prefab: "wedge_tornado", Elevation: 3000f, Layer: "Cloud Layer 2"),
+    (Prefab: "rope_tornado_f0", Elevation: 6400f, Layer: "Cloud Layer 3"),
+};
+var cleanup = new System.Collections.Generic.List<GameObject>();
+var results = new System.Collections.Generic.List<object>();
+var failures = new System.Collections.Generic.List<string>();
+GameObject Spawn(string prefab, Vector3 at)
+{
+    var root = GameObject.GetPrefab($"storm_disasters/{prefab}.prefab").Clone(at);
+    cleanup.Add(root);
+    root.NetworkMode = NetworkMode.Never;
+    return root;
+}
+void Check(GameObject root, string prefab, float elevation, SpriteRenderer deck)
+{
+    if (!root.IsValid()) throw new Exception($"{prefab} at +{elevation:F0}: tornado did not survive.");
+    if (!deck.Enabled || deck.Color.a < 0.3f) throw new Exception($"{deck.GameObject.Name} did not form.");
+    var vol = root.Children.Single(x => x.Name == "Condensation Volume").GetComponent<ModelRenderer>();
+    var local = vol.Attributes.GetVector4("StormCloudCenter", default);
+    var radius = vol.Attributes.GetVector4("StormCloudBounds", default);
+    var top = vol.Attributes.GetVector4("VortexBounds", default).z;
+    var wallZ = local.z + root.WorldPosition.z;
+    var gap = MathF.Abs(deck.WorldPosition.z - wallZ);
+    // Intersect the dense central part, not just the raymarch proxy box.
+    if (gap > radius.z * 0.48f || local.z - top > radius.z * 0.48f)
+        failures.Add($"{prefab} at +{elevation:F0}: wall {wallZ:F0}, {deck.GameObject.Name} {deck.WorldPosition.z:F0}, wall half-height {radius.z:F0}.");
+    results.Add(new { Prefab = prefab, Elevation = elevation, Ground = root.WorldPosition.z, FunnelTop = top + root.WorldPosition.z, WallCloud = wallZ, Layer = deck.GameObject.Name, DeckBase = deck.WorldPosition.z, CloudOffset = gap });
+}
+try
+{
+    const string ownerPrefab = "rope_tornado_f0";
+    var owner = Spawn(ownerPrefab, ownerAt);
+    await Task.Delay(3250, cancellationToken);
+    var weather = s.GetAllObjects(true).Single(x => x.Name == "Storm Disasters Weather" && x.Tags.Has("storm_disasters_weather"));
+    if (weather.Parent != owner) throw new Exception("Expected the lower tornado to own the shared deck.");
+    var decks = weather.Children.Where(x => x.Name.StartsWith("Cloud Layer ")).ToDictionary(x => x.Name, x => x.GetComponent<SpriteRenderer>());
+    Check(owner, ownerPrefab, 0f, decks["Cloud Layer 2"]);
+
+    var roots = new System.Collections.Generic.List<GameObject>();
+    var baseZ = owner.WorldPosition.z;
+    foreach (var p in cases)
+    {
+        var at = probeAt;
+        if (p.Elevation > 0f)
+        {
+            at = at.WithZ(baseZ + p.Elevation);
+            var platform = s.CreateObject(false);
+            cleanup.Add(platform);
+            platform.Name = "Cloud connection probe platform";
+            platform.NetworkMode = NetworkMode.Never;
+            platform.WorldPosition = at - Vector3.Up * 16f;
+            var collider = platform.Components.Create<BoxCollider>();
+            collider.Static = true;
+            collider.Scale = new Vector3(2000f, 2000f, 32f);
+            platform.Enabled = true;
+            await Task.Delay(100, cancellationToken);
+            at += Vector3.Up * 24f;
+        }
+        roots.Add(Spawn(p.Prefab, at));
+    }
+    await Task.Delay(3250, cancellationToken);
+    if (s.GetAllObjects(true).Single(x => x.Name == "Storm Disasters Weather" && x.Tags.Has("storm_disasters_weather")) != weather)
+        throw new Exception("The lower tornado's shared deck was replaced.");
+    for (var i = 0; i < cases.Length; i++)
+    {
+        var p = cases[i];
+        var root = roots[i];
+        Check(root, p.Prefab, p.Elevation, decks[p.Layer]);
+        if (p.Elevation > 0f && MathF.Abs(root.WorldPosition.z - baseZ - p.Elevation) > 2f)
+            failures.Add($"{p.Prefab}: root did not stay on the +{p.Elevation:F0} platform (Z={root.WorldPosition.z:F0}).");
+    }
+    if (failures.Count > 0) throw new Exception(string.Join(" ", failures));
+    return results;
+}
+finally { for (var i = cleanup.Count - 1; i >= 0; i--) if (cleanup[i].IsValid()) cleanup[i].Destroy(); }

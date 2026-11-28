@@ -468,8 +468,10 @@ public sealed class StormDisasterFunnel : Component
     const string WeatherTag = "storm_disasters_weather";
     const string WeatherAssets = "storm_disasters/weather_";
     const int RainCount = 480;
+    const float OvercastBaseHeight = 7200f;
     GameObject weather;
     GameObject weatherFocus;
+    GameObject sharedOvercast;
     SpriteRenderer[] cloudDeck = new SpriteRenderer[4];
     SpriteRenderer[] rainDrops = new SpriteRenderer[RainCount];
     SoundFile[] stormTracks = new SoundFile[4];
@@ -496,10 +498,15 @@ public sealed class StormDisasterFunnel : Component
             float distance = float.MaxValue;
             var eye = camera.WorldPosition;
             weatherFocus = GameObject;
+            sharedOvercast = null;
             foreach ( var obj in Scene.GetAllObjects( true ) )
             {
                 if ( obj == null || !obj.IsValid || !obj.Enabled ) continue;
-                if ( obj.Name == "Storm Disasters Weather" && obj.Tags.Has( WeatherTag ) ) occupied = true;
+                if ( obj.Name == "Storm Disasters Weather" && obj.Tags.Has( WeatherTag ) )
+                {
+                    occupied = true;
+                    sharedOvercast = obj;
+                }
                 if ( obj.Tags.Has( "storm_disaster_tornado" ) && (obj.Parent == null || !obj.Parent.Tags.Has( "storm_disaster_tornado" )) )
                 {
                     float candidate = (obj.WorldPosition - eye).WithZ( 0f ).LengthSquared;
@@ -546,6 +553,7 @@ public sealed class StormDisasterFunnel : Component
         rainTravel = 0f;
         weather = MakeVisual( GameObject, "Storm Disasters Weather" );
         weather.Tags.Add( WeatherTag );
+        sharedOvercast = weather;
         for ( int i = 0; i < cloudDeck.Length; i++ )
         {
             var cloud = MakeVisual( weather, "Cloud Layer " + i ).Components.Create<SpriteRenderer>();
@@ -598,13 +606,37 @@ public sealed class StormDisasterFunnel : Component
             {
                 int band = i - 1;
                 float drift = MathF.Sin( t * (0.027f + 0.008f * band) + band );
-                cloud.WorldPosition = stormCenter.WithZ( 0f ) * 0.21f + new Vector3( -1000f*band + 680f*drift, 1700f-1400f*band+530f*drift, weatherAnchorZ+7200f+760f*band );
+                cloud.WorldPosition = stormCenter.WithZ( 0f ) * 0.21f + new Vector3( -1000f*band + 680f*drift, 1700f-1400f*band+530f*drift, weatherAnchorZ + OvercastBaseHeight + 760f * (band - 1) );
                 cloud.WorldRotation = Rotation.From( new Angles( 90f, -35f + 29f * band + 4f * drift, 0f ) );
                 cloud.Size = new Vector2( 58000f + 4600f*band, 49000f + 3300f*band ) * (1f + 0.16f*severity);
                 float tone = 0.14f + 0.067f * band - 0.027f * severity;
                 cloud.Color = new Color( tone*0.89f, tone, tone*1.15f, strength*(0.65f - band*0.065f) );
             }
         }
+    }
+
+    float VisibleFunnelHeight( float presetHeight )
+    {
+        const float minDeckClearance = 1000f;
+        float lowestFitting = float.MaxValue;
+        float highestAbove = 0f;
+        if ( sharedOvercast != null && sharedOvercast.IsValid && sharedOvercast.Enabled )
+        {
+            float groundZ = WorldPosition.z;
+            foreach ( var layer in sharedOvercast.Children )
+            {
+                if ( !layer.IsValid || !layer.Enabled || !layer.Name.StartsWith( "Cloud Layer ", StringComparison.Ordinal ) ) continue;
+                float aboveGround = layer.WorldPosition.z - groundZ;
+                highestAbove = MathF.Max( highestAbove, aboveGround );
+                if ( aboveGround > minDeckClearance ) lowestFitting = MathF.Min( lowestFitting, aboveGround );
+            }
+        }
+        // If every overhead layer is close, use the highest one rather than inventing a deck.
+        float deck = lowestFitting < float.MaxValue ? lowestFitting : highestAbove > 0f ? highestAbove : OvercastBaseHeight;
+        // Keep the original flat-ground offset, including the small rating variation,
+        // but move the visual top one-for-one with the chosen deck's clearance.
+        float inset = 100f + (OvercastBaseHeight - 100f - presetHeight) * 0.08f;
+        return MathF.Max( 1f, deck - inset );
     }
 
     float WrapNear( float value, float center, float span ) => center + (Wrap( (value-center)/span + 0.5f )-0.5f)*span;
@@ -784,7 +816,8 @@ public sealed class StormDisasterFunnel : Component
 
     void UpdateFunnel()
     {
-        float height = GameHeight();
+        float presetHeight = GameHeight();
+        float height = VisibleFunnelHeight( presetHeight );
         float t = MathF.Max( 0f, Time.Now - formedAt );
         float duration = Duration();
         float phaseScale = MathF.Min( 24f, duration );
@@ -836,7 +869,7 @@ public sealed class StormDisasterFunnel : Component
             puff.Size = new Vector2( size, size * 1.28f );
             puff.Color = new Color( 0.24f, 0.25f, 0.27f, 0.69f * condensation );
         }
-        UpdateDebris( t, height, radii, top, groundScale, rope, circulation, progress );
+        UpdateDebris( t, presetHeight, radii, top, groundScale, rope, circulation, progress );
     }
 
     float DustIntensity() => MathF.Min( 5f, MathF.Max( 0f, Strength ) ) / 5f;

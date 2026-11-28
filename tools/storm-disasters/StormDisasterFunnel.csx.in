@@ -514,7 +514,8 @@ public sealed class StormDisasterFunnel : Component
 
     void UpdateFunnel()
     {
-        float height = GameHeight();
+        float presetHeight = GameHeight();
+        float height = VisibleFunnelHeight( presetHeight );
         float t = MathF.Max( 0f, Time.Now - formedAt );
         float duration = Duration();
         float phaseScale = MathF.Min( 24f, duration );
@@ -566,7 +567,7 @@ public sealed class StormDisasterFunnel : Component
             puff.Size = new Vector2( size, size * 1.28f );
             puff.Color = new Color( 0.24f, 0.25f, 0.27f, 0.69f * condensation );
         }
-        UpdateDebris( t, height, radii, top, groundScale, rope, circulation, progress );
+        UpdateDebris( t, presetHeight, radii, top, groundScale, rope, circulation, progress );
     }
 
     float DustIntensity() => MathF.Min( 5f, MathF.Max( 0f, Strength ) ) / 5f;

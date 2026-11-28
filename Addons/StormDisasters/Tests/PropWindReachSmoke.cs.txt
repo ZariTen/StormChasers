@@ -1,0 +1,74 @@
+// Stock crates under normal gravity: light debris responds to weaker ratings, and stronger ratings pull stock-mass crates farther out.
+var scene = Game.ActiveScene;
+if (!Networking.IsHost || !scene.GetAllComponents<MapInstance>().Any(x => x.MapName == "facepunch.flatgrass"))
+    throw new Exception("Expected local Flatgrass host.");
+var existing = scene.GetAllComponents<Prop>().Select(p => p.WorldPosition)
+    .Concat(scene.GetAllComponents<PlayerController>().Select(p => p.WorldPosition))
+    .Concat(scene.GetAllObjects(true).Where(o => o.Tags.Has("storm_disaster_tornado")).Select(o => o.WorldPosition)).ToArray();
+var point = new[] { new Vector3(6700,6200,0), new Vector3(-6700,-6200,0), new Vector3(6700,-6200,0), new Vector3(-6700,6200,0) }
+    .FirstOrDefault(p => existing.All(o => (o-p).WithZ(0).Length > 7800f));
+if (point == Vector3.Zero) throw new Exception("No isolated wind probe area.");
+var floor = scene.Trace.Ray(point + Vector3.Up * 100f, point - Vector3.Up * 100f).IgnoreDynamic().IgnoreKeyframed().Run();
+if (!floor.Hit) throw new Exception("No Flatgrass surface.");
+var origin = floor.HitPosition;
+var model = Model.Load("models/citizen_props/crate01.vmdl");
+if (model.IsError || model.Physics == null) throw new Exception("No stock crate physics.");
+var cleanup = new System.Collections.Generic.List<GameObject>();
+var failures = new System.Collections.Generic.List<string>();
+var results = new System.Collections.Generic.List<object>();
+try
+{
+    foreach (var (key, near, outer, nearMin, outerMin, light) in new[] {
+        ("funnel_tornado_f0", 450f, 1150f, 10f, 0f, true), // A nudge, not an F3-style pull.
+        ("funnel_tornado_f1", 650f, 1600f, 30f, 0f, true),
+        ("funnel_tornado", 1000f, 2350f, 40f, 0f, true),
+        ("funnel_tornado_f3", 1450f, 2350f, 95f, 50f, false),
+        ("wedge_tornado_f3", 1450f, 2350f, 95f, 50f, false),
+        ("funnel_tornado_f4", 1800f, 2800f, 100f, 70f, false),
+        ("funnel_tornado_f5", 2350f, 3500f, 100f, 90f, false),
+        ("wedge_tornado", 2350f, 3500f, 100f, 90f, false)
+    })
+    {
+        // Put props on different bearings so their paths cannot collide during the measurement.
+        var offsets = new[] { new Vector3(near,0,0), new Vector3(0,outer,0), new Vector3(0,-7600,0) };
+        var crates = offsets.Select(offset => {
+            var obj = scene.CreateObject(false);
+            cleanup.Add(obj);
+            obj.Name = "Wind: outer inflow probe crate";
+            obj.NetworkMode = NetworkMode.Never;
+            obj.WorldPosition = origin + offset + Vector3.Up * 60f;
+            obj.Components.Create<Prop>().Model = model;
+            obj.Enabled = true;
+            return obj;
+        }).ToArray();
+        await Task.Delay(950, cancellationToken);
+        var bodies = crates.Select(obj => obj.GetComponent<Rigidbody>()).ToArray();
+        if (bodies.Any(b => !b.IsValid() || !b.MotionEnabled || !b.Gravity || b.Velocity.Length > 4f))
+            throw new Exception("Crates must be loose and settled on the ground under normal gravity.");
+        if (light) foreach (var body in bodies) body.MassOverride = 20f;
+        float Radius(GameObject o) => (o.WorldPosition + o.WorldRotation * model.Bounds.Center - origin).WithZ(0f).Length;
+        var starts = crates.Select(Radius).ToArray();
+        var tornado = GameObject.GetPrefab($"storm_disasters/{key}.prefab").Clone(origin);
+        tornado.NetworkMode = NetworkMode.Never;
+        cleanup.Add(tornado);
+        float begin = Time.Now;
+        var inward = new float[crates.Length];
+        while (Time.Now - begin < 3f)
+        {
+            await Task.Delay(25, cancellationToken);
+            tornado.WorldPosition = origin;
+            for (int i = 0; i < crates.Length; i++) inward[i] = MathF.Max(inward[i], starts[i] - Radius(crates[i]));
+        }
+        var speeds = bodies.Select(b => b.Velocity.WithZ(0).Length).ToArray();
+        var masses = bodies.Select(b => b.Mass).ToArray();
+        tornado.Destroy();
+        foreach (var crate in crates) crate.Destroy();
+        var description = $"{key}, mass [{string.Join(", ", masses)}], inward [{string.Join(", ", inward)}], speed [{string.Join(", ", speeds)}]";
+        if (inward[2] > 2f || speeds[2] > 2f || inward[0] < nearMin || (outerMin > 0f ? inward[1] < outerMin : inward[1] > 2f || speeds[1] > 2f))
+            failures.Add(description);
+        results.Add(new { Preset = key, StartDistances = new[] { near, outer, 7600f }, Mass = masses[0], Inward = inward, HorizontalSpeeds = speeds });
+    }
+    if (failures.Count > 0) throw new Exception(string.Join("; ", failures));
+    return results;
+}
+finally { foreach (var obj in cleanup) if (obj.IsValid()) obj.Destroy(); }

@@ -5,7 +5,7 @@ if (!Networking.IsHost || !scene.GetAllComponents<MapInstance>().Any(x => x.MapN
 var floor = scene.Trace.Ray(new Vector3(5200, 4300, 100), new Vector3(5200, 4300, -100)).IgnoreDynamic().Run();
 if (!floor.Hit) throw new Exception("No Flatgrass floor at probe location.");
 var origin = floor.HitPosition;
-if (scene.GetAllComponents<Prop>().Any(p => (p.WorldPosition - origin).WithZ(0f).Length < 4000f) ||
+if (scene.GetAllComponents<Prop>().Any(p => (p.WorldPosition - origin).WithZ(0f).Length < 7600f) ||
     scene.GetAllComponents<PlayerController>().Any(p => (p.WorldPosition - origin).WithZ(0f).Length < 4000f) ||
     scene.GetAllObjects(true).Any(o => o.Parent == null && o.Tags.Has("storm_disaster_tornado") && (o.WorldPosition - origin).WithZ(0f).Length < 4500f))
     throw new Exception("Probe area is occupied by existing gameplay objects.");
@@ -47,7 +47,7 @@ async Task Simulate(float seconds, GameObject root = null, Action observe = null
 }
 try
 {
-    var distant = CreateCrate("Wind: out of range", new Vector3(0, -3800, 80));
+    var distant = CreateCrate("Wind: out of range", new Vector3(0, -7600, 80));
     var mapLike = CreateCrate("Wind: static control", new Vector3(-180, -120, 80), 1f, true);
     var mapLikeStart = mapLike.WorldPosition;
     await Simulate(0.15f);

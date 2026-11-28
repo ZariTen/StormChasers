@@ -1,0 +1,101 @@
+// Run on a private local Flatgrass host with an empty probe area. Exercises real prefab wind and rigidbodies.
+var scene = Game.ActiveScene;
+if (!Networking.IsHost || !scene.GetAllComponents<MapInstance>().Any(m => m.MapName == "facepunch.flatgrass"))
+    throw new Exception("Expected local Flatgrass host.");
+if (scene.GetAllObjects(true).Any(o => o.Tags.Has("storm_disaster_tornado")))
+    throw new Exception("Remove existing tornadoes before running the wind budget probe.");
+var occupied = scene.GetAllComponents<Prop>().Select(p => p.WorldPosition)
+    .Concat(scene.GetAllComponents<PlayerController>().Select(p => p.WorldPosition)).ToArray();
+var point = new[] { new Vector3(6700,6200,0), new Vector3(-6700,-6200,0), new Vector3(6700,-6200,0), new Vector3(-6700,6200,0) }
+    .FirstOrDefault(p => occupied.All(o => (o - p).WithZ(0f).Length > 8200f));
+if (point == Vector3.Zero) throw new Exception("No isolated wind budget probe area.");
+var floor = scene.Trace.Ray(point + Vector3.Up * 100f, point - Vector3.Up * 100f).IgnoreDynamic().IgnoreKeyframed().Run();
+if (!floor.Hit || floor.Normal.z < 0.65f) throw new Exception("No Flatgrass floor for wind budget probe.");
+var origin = floor.HitPosition;
+var model = Model.Load("models/citizen_props/crate01.vmdl");
+if (model.IsError || model.Physics == null) throw new Exception("No stock crate physics.");
+const int budget = 64;
+const string claim = "storm_disasters_orbit_claim";
+var cleanup = new System.Collections.Generic.List<GameObject>();
+Vector3 Ring(int index, float radius, float z)
+{
+    float angle = index * MathF.Tau / budget;
+    return origin + new Vector3(radius * MathF.Cos(angle), radius * MathF.Sin(angle), z);
+}
+void Place(Rigidbody body, Vector3 position)
+{
+    body.GameObject.WorldPosition = position;
+    body.Velocity = Vector3.Zero;
+}
+bool Pushed(Rigidbody body) => body.Velocity.WithZ(0f).Length > 1f;
+try
+{
+    for (int i = 0; i <= 2 * budget; i++)
+    {
+        var crate = scene.CreateObject(false);
+        cleanup.Add(crate);
+        crate.Name = "Wind: pulse budget crate";
+        crate.NetworkMode = NetworkMode.Never;
+        crate.WorldPosition = Ring(i % budget, i < budget ? 3000f : 1250f, i < 2 * budget ? 5000f : 5200f);
+        crate.LocalScale = Vector3.One * 0.35f;
+        crate.Components.Create<Prop>().Model = model;
+        crate.Enabled = true;
+    }
+    await Task.Delay(180, cancellationToken);
+    // Use scene enumeration order so the old first-come implementation sees a full fringe first.
+    var bodies = scene.GetAllComponents<Prop>().Where(p => cleanup.Contains(p.GameObject))
+        .Select(p => p.GameObject.GetComponent<Rigidbody>()).ToArray();
+    if (bodies.Length != 2 * budget + 1 || bodies.Any(b => !b.IsValid() || !b.MotionEnabled))
+        throw new Exception("Expected 129 enabled probe rigidbodies.");
+    foreach (var body in bodies) { body.Gravity = false; body.MassOverride = 15f; body.Velocity = Vector3.Zero; }
+    var fringe = bodies.Take(budget).ToArray();
+    var core = bodies.Skip(budget).Take(budget).ToArray();
+    var target = bodies[^1];
+    var funnel = GameObject.GetPrefab("storm_disasters/wedge_tornado.prefab").Clone(origin);
+    cleanup.Add(funnel);
+    funnel.NetworkMode = NetworkMode.Never;
+    var start = Time.Now;
+    async Task Tick()
+    {
+        await Task.Delay(16, cancellationToken);
+        if (!funnel.IsValid()) throw new Exception("F5 budget probe tornado disappeared.");
+        funnel.WorldPosition = origin;
+    }
+    while (Time.Now - start < 1f) await Tick();
+
+    for (int i = 0; i < budget; i++) Place(fringe[i], Ring(i, 3000f, 120f));
+    Place(target, Ring(0, 850f, 120f));
+    start = Time.Now;
+    while (!Pushed(target) && !fringe.Any(Pushed) && Time.Now - start < 0.6f) await Tick();
+    int fringeWithCore = fringe.Count(Pushed);
+    if (!Pushed(target) || fringeWithCore != budget - 1)
+        throw new Exception($"Expected one core prop ahead of 64 fringe props, with 64 total pushes; core={Pushed(target)}, fringe={fringeWithCore}.");
+
+    // Isolate the target and give it the upward speed needed to enter a real carry.
+    for (int i = 0; i < budget; i++) Place(fringe[i], Ring(i, 3000f, 5000f));
+    Place(target, Ring(0, 850f, 150f));
+    target.Velocity = Vector3.Up * 180f;
+    start = Time.Now;
+    while (!target.GameObject.Tags.Has(claim) && Time.Now - start < 0.6f) await Tick();
+    if (!target.GameObject.Tags.Has(claim)) throw new Exception("Expected the isolated target to enter a carry.");
+
+    // Fill both queues with props that enumerate before the active carry.
+    for (int i = 0; i < budget; i++)
+    {
+        Place(fringe[i], Ring(i, 3000f, 120f));
+        Place(core[i], Ring(i, 1250f, 120f));
+    }
+    start = Time.Now;
+    while (!core.Any(Pushed) && !fringe.Any(Pushed) && Time.Now - start < 0.6f) await Tick();
+    int coreWithCarry = core.Count(Pushed);
+    int fringeWithCarry = fringe.Count(Pushed);
+    if (!target.GameObject.Tags.Has(claim) || coreWithCarry != budget - 1 || fringeWithCarry != 0)
+        throw new Exception($"Expected active carry before core and fringe; claim={target.GameObject.Tags.Has(claim)}, core={coreWithCarry}, fringe={fringeWithCarry}.");
+    while (Time.Now - start < 0.35f)
+    {
+        await Tick();
+        if (!target.GameObject.Tags.Has(claim)) throw new Exception("Active carry lost its claim during crowded wind pulses.");
+    }
+    return new { FringeWithCore = fringeWithCore, CoreWithCarry = coreWithCarry, FringeWithCarry = fringeWithCarry, CarryRetained = true };
+}
+finally { foreach (var obj in cleanup) if (obj.IsValid()) obj.Destroy(); }

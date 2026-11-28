@@ -2,8 +2,8 @@
 var scene = Game.ActiveScene;
 if (!Networking.IsHost || !scene.GetAllComponents<MapInstance>().Any(x => x.MapName == "facepunch.flatgrass")) throw new Exception("Expected local Flatgrass host.");
 var point = new Vector3(5200, 4300, 0);
-if (scene.GetAllComponents<Prop>().Any(p => (p.WorldPosition - point).WithZ(0).Length < 4000f) ||
-    scene.GetAllComponents<PlayerController>().Any(p => (p.WorldPosition - point).WithZ(0).Length < 4000f) ||
+if (scene.GetAllComponents<Prop>().Any(p => (p.WorldPosition - point).WithZ(0f).Length < 7600f) ||
+    scene.GetAllComponents<PlayerController>().Any(p => (p.WorldPosition - point).WithZ(0f).Length < 4000f) ||
     scene.GetAllObjects(true).Any(o => o.Parent == null && o.Tags.Has("storm_disaster_tornado") && (o.WorldPosition - point).WithZ(0).Length < 4500f))
     throw new Exception("Probe area is occupied by existing gameplay objects.");
 var floor = scene.Trace.Ray(point + Vector3.Up * 100f, point - Vector3.Up * 100f).IgnoreDynamic().Run();
@@ -22,14 +22,14 @@ GameObject CreateCrate(Vector3 offset)
     obj.Enabled = true;
     return obj;
 }
-async Task<float[]> Test(string prefab)
+async Task<Vector3[]> Test(string prefab)
 {
     var specs = new[] {
         (Offset: new Vector3(45,0,85), Mass: 80f),
         (Offset: new Vector3(850,0,85), Mass: 80f),
         (Offset: new Vector3(-850,0,85), Mass: 440f),
         (Offset: new Vector3(0,1500,85), Mass: 80f),
-        (Offset: new Vector3(0,-3800,85), Mass: 80f),
+        (Offset: new Vector3(0,-7600,85), Mass: 80f),
         (Offset: new Vector3(0,-850,85), Mass: 80f),
     };
     var wall = scene.CreateObject(false);
@@ -59,22 +59,25 @@ async Task<float[]> Test(string prefab)
     }
     started = Time.Now;
     while (Time.Now - started < 0.42f) { await Task.Delay(30,cancellationToken); tornado.WorldPosition = origin; }
-    var speeds = bodies.Select(b => b.Velocity.WithZ(0f).Length).ToArray();
+    var velocities = bodies.Select(b => b.Velocity.WithZ(0f)).ToArray();
     foreach (var obj in props) obj.Destroy();
     wall.Destroy();
     tornado.Destroy();
     await Task.Delay(60,cancellationToken);
-    return speeds;
+    return velocities;
 }
 try
 {
-    var wedge = await Test("wedge_tornado");
+    var wedgeFlow = await Test("wedge_tornado");
+    var wedge = wedgeFlow.Select(v => v.Length).ToArray();
     if (wedge[1] < 40f || wedge[3] < 10f || wedge[0] > wedge[1] * 0.25f || wedge[4] > 1f)
         throw new Exception($"F5 wedge should have a calm eye, an active wall, and exterior decay: {string.Join(", ", wedge)}.");
     if (wedge[1] < wedge[2] * 2f) throw new Exception($"Light and dense crates accelerated too similarly: {string.Join(", ", wedge)}.");
     if (wedge[5] > wedge[1] * 0.45f) throw new Exception($"A static wall failed to shelter the downwind crate: {string.Join(", ", wedge)}.");
-    var rope = await Test("rope_tornado_f5");
-    if (rope[3] > 1f || rope[1] > wedge[1] * 0.5f) throw new Exception($"F5 rope should have a narrower field than the wedge: {string.Join(", ", rope)}.");
+    var ropeFlow = await Test("rope_tornado_f5");
+    var rope = ropeFlow.Select(v => v.Length).ToArray();
+    if (rope[4] > 1f || -ropeFlow[1].x <= 1.5f * MathF.Abs(ropeFlow[1].y) || wedgeFlow[1].y <= MathF.Abs(wedgeFlow[1].x))
+        throw new Exception($"At the same radius, the rope should pull inward while the wider wedge still turns around its wall: rope {ropeFlow[1]}, wedge {wedgeFlow[1]}.");
     return new { Samples = "Horizontal units/s: eye, light core, dense core, outer funnel, far outside, sheltered core", Wedge = wedge, Rope = rope };
 }
 finally

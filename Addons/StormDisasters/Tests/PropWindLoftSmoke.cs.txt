@@ -1,102 +1,109 @@
-// Verify a grounded crate spirals upward before the tornado throws it out.
+// Grounded stock crates should follow different paths through the same tornado and leave without a fixed kick.
 var scene = Game.ActiveScene;
-if (!Networking.IsHost || !scene.GetAllComponents<MapInstance>().Any(m => m.MapName == "facepunch.flatgrass")) throw new Exception("Expected local Flatgrass host.");
+if (!Networking.IsHost || !scene.GetAllComponents<MapInstance>().Any(m => m.MapName == "facepunch.flatgrass"))
+    throw new Exception("Expected local Flatgrass host.");
 var occupied = scene.GetAllComponents<Prop>().Select(p => p.WorldPosition)
     .Concat(scene.GetAllComponents<PlayerController>().Select(p => p.WorldPosition))
-    .Concat(scene.GetAllObjects(true).Where(o => o.Parent == null && o.Tags.Has("storm_disaster_tornado")).Select(o => o.WorldPosition)).ToArray();
-var point = new[] { new Vector3(5200,4300,0), new Vector3(-5200,-4300,0), new Vector3(5200,-4300,0), new Vector3(-5200,4300,0) }
-    .FirstOrDefault(p => occupied.All(o => (o-p).WithZ(0f).Length > 4800f));
-if (point == Vector3.Zero) throw new Exception("No isolated probe area on Flatgrass.");
+    .Concat(scene.GetAllObjects(true).Where(o => o.Tags.Has("storm_disaster_tornado")).Select(o => o.WorldPosition)).ToArray();
+var point = new[] { new Vector3(6700,6200,0), new Vector3(-6700,-6200,0), new Vector3(6700,-6200,0), new Vector3(-6700,6200,0) }
+    .FirstOrDefault(p => occupied.All(o => (o-p).WithZ(0f).Length > 7800f));
+if (point == Vector3.Zero) throw new Exception("No isolated probe area.");
 var ground = scene.Trace.Ray(point + Vector3.Up * 100f, point - Vector3.Up * 100f).IgnoreDynamic().IgnoreKeyframed().Run();
 if (!ground.Hit) throw new Exception("No ground at probe area.");
 var origin = ground.HitPosition;
 var model = Model.Load("models/citizen_props/crate01.vmdl");
-var probe = new System.Collections.Generic.List<GameObject>();
-GameObject Crate(string name, float x)
+var cleanup = new System.Collections.Generic.List<GameObject>();
+GameObject Crate(float angle, float distance)
 {
     var obj = scene.CreateObject(false);
-    probe.Add(obj);
-    obj.Name = "Wind: " + name;
+    cleanup.Add(obj);
+    obj.Name = "Wind: loft trajectory crate";
     obj.NetworkMode = NetworkMode.Never;
-    obj.WorldPosition = origin + new Vector3(x,0,55);
+    obj.WorldPosition = origin + new Vector3(MathF.Cos(angle) * distance, MathF.Sin(angle) * distance, 55f);
     obj.Components.Create<Prop>().Model = model;
     obj.Enabled = true;
     return obj;
 }
-GameObject Tornado(string prefab)
+GameObject Tornado(string key)
 {
-    var obj = GameObject.GetPrefab($"storm_disasters/{prefab}.prefab").Clone(origin);
-    probe.Add(obj);
+    var obj = GameObject.GetPrefab($"storm_disasters/{key}.prefab").Clone(origin);
     obj.NetworkMode = NetworkMode.Never;
+    cleanup.Add(obj);
     return obj;
 }
-float CenterHeight(GameObject crate) => (crate.WorldPosition + crate.WorldRotation * model.Bounds.Center).z;
-async Task Sample(GameObject tornado, float seconds, Action observe, Func<bool> finished = null, bool holdPosition = true)
-{
-    float start = Time.Now;
-    while (Time.Now - start < seconds)
-    {
-        await Task.Delay(25,cancellationToken);
-        if (holdPosition) tornado.WorldPosition = origin;
-        observe();
-        if (finished?.Invoke() == true) break;
-    }
-}
+Vector3 Center(GameObject obj) => obj.WorldPosition + obj.WorldRotation * model.Bounds.Center;
 try
 {
-    var weakCrate = Crate("F0 light crate", 165f);
-    await Task.Delay(850,cancellationToken);
+    var weakCrate = Crate(0, 165f);
+    await Task.Delay(850, cancellationToken);
     weakCrate.GetComponent<Rigidbody>().MassOverride = 20f;
-    var resting = CenterHeight(weakCrate);
+    var resting = Center(weakCrate).z;
     var f0 = Tornado("wedge_tornado_f0");
     float weakLift = 0f;
-    await Sample(f0, 1.5f, () => weakLift = MathF.Max(weakLift, CenterHeight(weakCrate)-resting));
+    var start = Time.Now;
+    while (Time.Now - start < 1.5f)
+    {
+        await Task.Delay(25, cancellationToken);
+        f0.WorldPosition = origin;
+        weakLift = MathF.Max(weakLift, Center(weakCrate).z - resting);
+    }
     weakCrate.Destroy();
     f0.Destroy();
+    if (weakLift > 35f) throw new Exception($"F0 should mostly push along the ground (lift {weakLift:F1}).");
 
-    var light = Crate("F5 light crate", 850f);
-    var stock = Crate("F5 unmodified stock crate", -850f);
-    await Task.Delay(850,cancellationToken);
-    var lightBody = light.GetComponent<Rigidbody>();
-    var stockBody = stock.GetComponent<Rigidbody>();
-    lightBody.MassOverride = 20f;
-    var restLight = CenterHeight(light);
-    var restStock = CenterHeight(stock);
     var f5 = Tornado("wedge_tornado");
-    var overlapping = Tornado("wedge_tornado");
-    var lastVelocity = lightBody.Velocity.WithZ(0f);
-    float maximumReleaseImpulse = 0f;
-    float liftLight=0f, liftStock=0f, previousAngle=0f, orbit=0f, releaseHeight=0f, releaseSpeed=0f;
-    await Sample(f5, 10f, () => {
-        overlapping.WorldPosition = f5.WorldPosition;
-        float z = CenterHeight(light) - restLight;
-        liftLight = MathF.Max(liftLight, z);
-        liftStock = MathF.Max(liftStock, CenterHeight(stock) - restStock);
-        var flat = (light.WorldPosition-f5.WorldPosition).WithZ(0f);
-        var radial = flat.Normal;
-        var angle = MathF.Atan2(flat.y, flat.x);
-        float delta = angle - previousAngle;
-        if (delta > MathF.PI) delta -= MathF.Tau;
-        if (delta < -MathF.PI) delta += MathF.Tau;
-        if (z > 50f && flat.Length > 280f) orbit += delta;
-        previousAngle = angle;
-        var v = lightBody.Velocity;
-        if (z > 760f) maximumReleaseImpulse = MathF.Max(maximumReleaseImpulse,(v.WithZ(0f)-lastVelocity).Length);
-        lastVelocity = v.WithZ(0f);
-        float outward = radial.x*v.x + radial.y*v.y;
-        if (z > 130f && flat.Length > 1090f && outward > 720f)
+    var samples = new System.Collections.Generic.List<(float Mass, float Lift, float Residence, float Turns, float ExitHeight, float Outward, float Snap, float Coast) >();
+    for (int i = 0; i < 6; i++)
+    {
+        var crate = Crate(i * 1.0472f, 850f);
+        start = Time.Now;
+        // Keep the crate out of the wind while it settles, then start with the same radial distance.
+        f5.Enabled = false;
+        await Task.Delay(850, cancellationToken);
+        var body = crate.GetComponent<Rigidbody>();
+        if (i < 5) body.MassOverride = 65f;
+        var mass = body.Mass;
+        resting = Center(crate).z;
+        f5.WorldPosition = origin;
+        f5.Enabled = true;
+        start = Time.Now;
+        float caught = -1f, lift = 0f, swept = 0f, previousAngle = i * 1.0472f;
+        var previous = body.Velocity.WithZ(0f);
+        bool recorded = false;
+        while (Time.Now - start < 8.5f)
         {
-            releaseHeight = z;
-            releaseSpeed = outward;
+            await Task.Delay(22, cancellationToken);
+            f5.WorldPosition = origin;
+            var center = Center(crate);
+            lift = MathF.Max(lift, center.z - resting);
+            var offset = (center - origin).WithZ(0f);
+            var angle = MathF.Atan2(offset.y, offset.x);
+            var velocity = body.Velocity.WithZ(0f);
+            if (crate.Tags.Has("storm_disasters_orbit_claim") && caught < 0f) caught = Time.Now;
+            if (caught >= 0f) swept += MathF.IEEERemainder(angle - previousAngle, MathF.Tau);
+            if (caught >= 0f && crate.Tags.Has("storm_disasters_orbit_release"))
+            {
+                var residence = Time.Now - caught;
+                var snap = (velocity - previous).Length;
+                for (int tick = 0; tick < 9; tick++) { await Task.Delay(22, cancellationToken); f5.WorldPosition = origin; }
+                var coast = (body.Velocity.WithZ(0f) - velocity).Length;
+                samples.Add((mass, lift, residence, swept / MathF.Tau, center.z - resting, Vector3.Dot(velocity, offset.Normal), snap, coast));
+                recorded = true;
+                break;
+            }
+            previous = velocity;
+            previousAngle = angle;
         }
-    }, () => releaseHeight > 0f, holdPosition: false);
-    if (weakLift > 35f || liftStock < 100f || orbit < 1.25f*MathF.Tau || releaseHeight < 760f)
-        throw new Exception($"Unexpected spiral or throw: F0 lift={weakLift:F1}; stock lift={liftStock:F1}; light lift={liftLight:F1}; airborne turns={orbit/MathF.Tau:F2}; release height={releaseHeight:F1}; outward speed={releaseSpeed:F1}.");
-    if (maximumReleaseImpulse > 1800f) throw new Exception($"Two overlapping funnels stacked their release impulses ({maximumReleaseImpulse:F0}).");
-    var afterThrow = lightBody.Velocity.WithZ(0f);
-    await Sample(f5, 0.20f, () => {}, holdPosition: false);
-    var drift = (lightBody.Velocity.WithZ(0f) - afterThrow).Length;
-    if (drift > 180f) throw new Exception($"The prop was pulled back into the wind right after release (horizontal velocity change {drift:F0}).");
-    return new { F0LightLift = weakLift, F5StockMass = stockBody.Mass, F5StockLift = liftStock, AirborneTurns = orbit/MathF.Tau, ReleaseHeight = releaseHeight, ReleaseOutwardSpeed = releaseSpeed, PeakReleaseImpulse = maximumReleaseImpulse, HorizontalVelocityChangeAfterRelease = drift };
+        if (!recorded) samples.Add((mass, lift, -1f, swept / MathF.Tau, 0f, 0f, 0f, 0f));
+        crate.Destroy();
+    }
+    var exits = samples.Take(5).Where(x => x.Residence > 0f).ToArray();
+    string details = string.Join("; ", samples.Select(x => $"mass={x.Mass:F0} lift={x.Lift:F0} dwell={x.Residence:F2} turns={x.Turns:F2} exitZ={x.ExitHeight:F0} out={x.Outward:F0} snap={x.Snap:F0} coast={x.Coast:F0}"));
+    if (exits.Length < 4 || exits.Max(x => x.Residence) - exits.Min(x => x.Residence) < .85f ||
+        exits.Max(x => x.ExitHeight) - exits.Min(x => x.ExitHeight) < 240f || !exits.Any(x => x.Turns < 1.15f) ||
+        !exits.Any(x => x.Outward > 450f) || !exits.Any(x => x.Outward < 300f) ||
+        exits.Any(x => x.Snap > 700f || (x.ExitHeight > 130f && x.Coast > 180f)) || samples[^1].Lift < 90f)
+        throw new Exception("Expected varied trajectories and exits without a uniform kick: " + details);
+    return new { F0Lift = weakLift, Trials = details };
 }
-finally { foreach(var obj in probe) if(obj.IsValid()) obj.Destroy(); }
+finally { foreach (var obj in cleanup) if (obj.IsValid()) obj.Destroy(); }

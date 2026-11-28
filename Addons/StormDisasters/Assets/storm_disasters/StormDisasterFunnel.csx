@@ -24,6 +24,7 @@ public sealed class StormDisasterFunnel : Component
     float formedAt;
     float nextWindPulse;
     float lastWindPulse;
+    const int WindPulseBudget = 64;
     System.Collections.Generic.Dictionary<GameObject, float> nextUnfreezeRoll;
     int unfreezeRolls;
     System.Collections.Generic.Dictionary<GameObject, Vector4> propOrbits;
@@ -185,65 +186,89 @@ public sealed class StormDisasterFunnel : Component
         float eye = wedge ? GameOpenCore() * width : 0f;
         var radii = GameRadii() * width;
         float top = GameTopRadius() * width;
+        // Even a narrow funnel draws in air outside its visible wall. Weak tiers
+        // move light debris nearby; stronger inflow must also overcome stock-prop friction.
+        float inflowReach = (rating == 0 ? 850f : rating == 1 ? 1250f : rating == 2 ? 1870f : rating == 3 ? 4000f : rating == 4 ? 4850f : 5300f) + radii.x * 0.55f;
+        float inflowStrength = rating == 0 ? 0.53f : rating == 1 ? 0.49f : rating == 2 ? 0.56f : rating == 3 ? 0.97f : rating == 4 ? 0.93f : 0.85f;
+        float scanReach = MathF.Max( top * 3f + 512f, inflowReach + 1024f );
         int pushed = 0;
         if ( orbitOwnerTag == null ) orbitOwnerTag = "sd_orbit_" + GameObject.Id.ToString( "N" ).Substring( 0, 16 );
         if ( orbitTouched == null ) orbitTouched = new System.Collections.Generic.List<GameObject>();
         else orbitTouched.Clear();
-        foreach ( var prop in Scene.GetAllComponents<Prop>() )
+        // Spend the fixed pulse budget on active carries, then the core, then the fringe.
+        for ( int priority = 0; priority < 3; priority++ )
         {
-            if ( prop.IsStatic || prop.GameObject.Tags.Has( "player" ) ) continue;
-            var offset = prop.WorldPosition - WorldPosition;
-            if ( offset.z < -48f || offset.z >= height * 0.82f || offset.WithZ( 0f ).Length > top * 3f + 512f ) continue;
-            var body = prop.GameObject.GetComponent<Rigidbody>();
-            if ( body == null || !body.IsValid || body.IsProxy ) continue;
-            if ( body.MotionEnabled && (pushed >= 64 || body.Mass <= 0f) ) continue;
-            if ( !body.MotionEnabled && (unfreezeChance <= 0f || ramp < 0.35f) ) continue;
-
-            var model = prop.Model;
-            if ( model == null || !model.IsValid || model.IsError ) continue;
-            var scale = prop.WorldScale;
-            var bounds = model.Bounds;
-            var localCenter = bounds.Center * scale;
-            var point = prop.WorldPosition + prop.WorldRotation * localCenter;
-            var sampleOffset = point - WorldPosition;
-            if ( sampleOffset.z < -32f ) continue;
-            float z = MathF.Max( sampleOffset.z, 0f );
-            var obj = prop.GameObject;
-            if ( obj.Tags.Has( OrbitClaimTag ) && !obj.Tags.Has( orbitOwnerTag ) ) continue;
-            if ( HasReleaseCooldown( obj, now, z ) ) continue;
-            float h = Math.Clamp( z / height, 0f, 1f );
-            var flat = (sampleOffset - FunnelAxis( age, h, groundScale, rope )).WithZ( 0f );
-            float distance = flat.Length;
-            float wall = SampleRadii( radii, top, h );
-            float rPeak = MathF.Max( 48f, eye > 0f ? MathF.Max( eye * 1.25f, wall * 0.55f ) : wall * 0.92f );
-            var wind = VortexWind( flat, distance, z, h, age, ramp, peak, wall, rPeak, eye );
-            if ( wind.Length < 10f ) continue;
-
-            // A nearby solid obstruction reduces wind on its lee side. Ignore
-            // movable bodies so a stack of wind-driven props cannot shield itself.
-            var horizontal = wind.WithZ( 0f );
-            bool sheltered = horizontal.Length > 10f && Scene.Trace.Ray( point, point - horizontal.Normal * 240f )
-                .WithoutTags( "player", "trigger" ).IgnoreDynamic().IgnoreKeyframed().Run().Hit;
-            if ( sheltered ) wind *= 0.35f;
-            if ( !body.MotionEnabled )
+            if ( priority == 0 && (orbitClaims == null || orbitClaims.Count == 0) ) continue;
+            foreach ( var prop in Scene.GetAllComponents<Prop>() )
             {
-                // Calm parts of the eye and the weak fringe don't pull props loose.
-                if ( wind.Length < peak * 0.18f ) continue;
-                if ( nextUnfreezeRoll == null ) nextUnfreezeRoll = new System.Collections.Generic.Dictionary<GameObject, float>();
-                if ( nextUnfreezeRoll.ContainsKey( obj ) && now < nextUnfreezeRoll[obj] ) continue;
-                nextUnfreezeRoll[obj] = now + unfreezeCooldown;
-                unfreezeRolls++;
-                int seed = (int)(formedAt * 97f + routePhase * 825f) + unfreezeRolls;
-                if ( Seed( seed ) >= unfreezeChance ) continue;
-                body.MotionEnabled = true;
+                if ( prop.IsStatic || prop.GameObject.Tags.Has( "player" ) ) continue;
+                var obj = prop.GameObject;
+                bool carrying = propOrbits != null && propOrbits.ContainsKey( obj );
+                if ( (priority == 0) != carrying ) continue;
+                if ( priority != 0 && orbitTouched.Contains( obj ) ) continue;
+                if ( obj.Tags.Has( OrbitClaimTag ) && !obj.Tags.Has( orbitOwnerTag ) ) continue;
+                var offset = prop.WorldPosition - WorldPosition;
+                if ( offset.z < -48f || offset.z >= height * 0.82f || offset.WithZ( 0f ).Length > scanReach ) continue;
+                var body = prop.GameObject.GetComponent<Rigidbody>();
+                if ( body == null || !body.IsValid || body.IsProxy ) continue;
+                if ( body.MotionEnabled && (pushed >= WindPulseBudget || body.Mass <= 0f) ) continue;
+                if ( !body.MotionEnabled && (unfreezeChance <= 0f || ramp < 0.35f) ) continue;
+
+                var model = prop.Model;
+                if ( model == null || !model.IsValid || model.IsError ) continue;
+                var scale = prop.WorldScale;
+                var bounds = model.Bounds;
+                var localCenter = bounds.Center * scale;
+                var point = prop.WorldPosition + prop.WorldRotation * localCenter;
+                var sampleOffset = point - WorldPosition;
+                if ( sampleOffset.z < -32f ) continue;
+                float z = MathF.Max( sampleOffset.z, 0f );
+                if ( HasReleaseCooldown( obj, now, z ) ) continue;
+                float h = Math.Clamp( z / height, 0f, 1f );
+                var flat = (sampleOffset - FunnelAxis( age, h, groundScale, rope )).WithZ( 0f );
+                float distance = flat.Length;
+                float wall = SampleRadii( radii, top, h );
+                float rPeak = MathF.Max( 48f, eye > 0f ? MathF.Max( eye * 1.25f, wall * 0.55f ) : wall * 0.92f );
+                float coreReach = MathF.Max( rPeak * 2.75f, wall * 1.55f );
+                if ( priority != 0 && (priority == 1) != (distance < coreReach) ) continue;
+                var wind = VortexWind( flat, distance, z, h, age, ramp, peak, coreReach, rPeak, eye, inflowReach, inflowStrength );
+                if ( wind.Length < 10f ) continue;
+
+                // A nearby solid obstruction reduces wind on its lee side. Ignore
+                // movable bodies so a stack of wind-driven props cannot shield itself.
+                var horizontal = wind.WithZ( 0f );
+                bool sheltered = horizontal.Length > 10f && Scene.Trace.Ray( point, point - horizontal.Normal * 240f )
+                    .WithoutTags( "player", "trigger" ).IgnoreDynamic().IgnoreKeyframed().Run().Hit;
+                if ( sheltered ) wind *= 0.35f;
+                if ( !body.MotionEnabled )
+                {
+                    // Calm parts of the eye and the weak fringe don't pull props loose.
+                    if ( wind.Length < peak * 0.18f ) continue;
+                    if ( nextUnfreezeRoll == null ) nextUnfreezeRoll = new System.Collections.Generic.Dictionary<GameObject, float>();
+                    if ( nextUnfreezeRoll.ContainsKey( obj ) && now < nextUnfreezeRoll[obj] ) continue;
+                    nextUnfreezeRoll[obj] = now + unfreezeCooldown;
+                    unfreezeRolls++;
+                    int seed = (int)(formedAt * 97f + routePhase * 825f) + unfreezeRolls;
+                    if ( Seed( seed ) >= unfreezeChance ) continue;
+                    body.MotionEnabled = true;
+                }
+                float mass = body.Mass;
+                if ( pushed >= WindPulseBudget || mass <= 0f ) continue;
+                var dimensions = bounds.Size * scale;
+                if ( rating < 2 || !CarryPropInOrbit( obj, body, flat, distance, z, rPeak, height, peak, wind, sheltered, mass, now, dt, rating, prop.WorldRotation, dimensions ) )
+                {
+                    // Outer gusts unload ground contact on exposed props without
+                    // changing the core's lift or ignoring the prop's mass and drag.
+                    float outerLoft = rating == 3 || rating == 4
+                        ? (rating == 3 ? 1.75f : 0.95f) * Fade( (distance / rPeak - 1.40f) / 1.20f ) * (1f - Fade( h / 0.16f )) : 0f;
+                    ApplyAirDrag( body, prop.WorldRotation, dimensions, wind, mass, dt, loft + outerLoft );
+                }
+                // A carry dropped this pulse must not get a second push in a later pass.
+                if ( carrying && !propOrbits.ContainsKey( obj ) ) orbitTouched.Add( obj );
+                pushed++;
             }
-            float mass = body.Mass;
-            if ( pushed >= 64 || mass <= 0f ) continue;
-            var dimensions = bounds.Size * scale;
-            if ( rating < 2 || !CarryPropInOrbit( obj, body, flat, distance, z, rPeak, height, peak, wind, sheltered, mass, now, dt, rating, prop.WorldRotation, dimensions ) )
-                ApplyAirDrag( body, prop.WorldRotation, dimensions, wind, mass, dt, loft );
-            pushed++;
         }
+
         // Release claims when a prop leaves the field, is frozen, or disappears.
         if ( propOrbits == null ) return;
         if ( orbitReap == null ) orbitReap = new System.Collections.Generic.List<GameObject>();
@@ -293,15 +318,14 @@ public sealed class StormDisasterFunnel : Component
         if ( propOrbits != null ) propOrbits.Clear();
     }
 
-    Vector3 VortexWind( Vector3 flat, float distance, float z, float h, float age, float ramp, float peak, float wall, float rPeak, float eye )
+    Vector3 VortexWind( Vector3 flat, float distance, float z, float h, float age, float ramp, float peak, float outer, float rPeak, float eye, float inflowReach, float inflowStrength )
     {
         float verticalFade = 1f - Fade( (h - 0.32f) / 0.48f );
         if ( verticalFade <= 0f ) return Vector3.Zero;
         if ( distance < 1f ) return Vector3.Zero;
         // Modified Rankine vortex: rotating core with power-law exterior decay.
         float q = distance / rPeak;
-        float outer = MathF.Max( rPeak * 2.75f, wall * 1.55f );
-        if ( distance >= outer ) return Vector3.Zero;
+        if ( distance >= MathF.Max( outer, inflowReach ) ) return Vector3.Zero;
         float swirl = q < 1f ? q : MathF.Pow( q, -0.75f );
         if ( eye > 0f ) swirl *= 0.13f + 0.87f * Fade( (distance - eye * 0.35f) / (eye * 0.70f) );
         float radialFade = 1f - Fade( (distance / outer - 0.63f) / 0.37f );
@@ -311,18 +335,29 @@ public sealed class StormDisasterFunnel : Component
         var tangent = new Vector3( -radial.y, radial.x, 0f );
         float inflow = 0.30f * (1f - Fade( h / 0.40f ));
         float updraft = 0.60f * swirl * z / (z + 34f + rPeak * 0.055f);
-        return (tangent - radial * inflow + Vector3.Up * updraft) * strength;
+        var coreWind = (tangent - radial * inflow + Vector3.Up * updraft) * strength;
+        if ( inflowReach <= 0f || distance >= inflowReach ) return coreWind;
+
+        // Keep the existing rotating core and calm wedge eye intact. Farther
+        // out, flow is mostly inward with a smaller turn in the same direction.
+        float beyondCore = Fade( (q - 1.40f) / 0.80f );
+        float fringe = 1f - Fade( (distance / inflowReach - 0.48f) / 0.52f );
+        float lowAltitude = 1f - Fade( (h - 0.12f) / 0.40f );
+        float feeder = peak * ramp * gust * inflowStrength * beyondCore * fringe * lowAltitude;
+        return coreWind + (tangent * 0.24f - radial) * feeder;
     }
 
     bool CarryPropInOrbit( GameObject obj, Rigidbody body, Vector3 flat, float distance, float z, float rPeak, float height, float peak, Vector3 wind, bool sheltered, float mass, float now, float dt, int rating, Rotation rotation, Vector3 dimensions )
     {
-        // x: last azimuth; y: swept angle; z: ring radius; w: release height
+        // x: capture time; y: gust response; z: typical radius; w: residence window
 
         Vector4 track = default;
         if ( propOrbits != null && propOrbits.ContainsKey( obj ) ) track = propOrbits[obj];
 
+        // Discard the old height-based tracks if the script is reloaded during Play.
+        if ( track.w > 10f ) { DropOrbit( obj ); track = default; }
         var velocity = body.Velocity;
-        if ( sheltered || distance < 1f || (track.w > 0f && (z < 32f || distance > track.z * 1.8f)) )
+        if ( sheltered || distance < 1f || (track.w > 0f && z < 32f) )
         {
             if ( track.w > 0f ) DropOrbit( obj );
             return false;
@@ -336,22 +371,20 @@ public sealed class StormDisasterFunnel : Component
             if ( z < 62f || velocity.z < 85f || distance < rPeak * 0.60f || distance > rPeak * 1.38f || wind.Length < peak * 0.42f ) return false;
             if ( propOrbits == null ) propOrbits = new System.Collections.Generic.Dictionary<GameObject, Vector4>();
             orbitSerial++;
-            float ring = Math.Clamp( distance, rPeak * 0.80f, rPeak * 1.12f );
-            float release = Math.Clamp( height * (0.215f + 0.018f * (rating - 2)) * (0.91f + 0.18f * Seed( orbitSerial + 31 )), 650f, 1750f );
-            track = new Vector4( angle, 0f, ring, release );
+            float localPhase = angle + routePhase + (now - formedAt) * 0.63f;
+            float response = Math.Clamp( Seed( orbitSerial + 77 ) + 0.07f * MathF.Sin( localPhase ), 0f, 1f );
+            float ring = Math.Clamp( distance, rPeak * 0.73f, rPeak * 1.16f );
+            float residence = 1.05f + 4.70f * response + 0.60f * Seed( orbitSerial + 151 );
+            track = new Vector4( now, response, ring, residence );
         }
 
-        float step = (Wrap( (angle - track.x) / MathF.Tau + 0.5f ) - 0.5f) * MathF.Tau;
-        float swept = MathF.Max( 0f, track.y + Math.Clamp( step, -0.50f, 0.50f ) );
+        float elapsed = now - track.x;
         var radial = flat / distance;
         var tangent = new Vector3( -radial.y, radial.x, 0f );
-        if ( swept >= 1.50f * MathF.Tau && z >= track.w )
+        if ( elapsed >= track.w || distance > track.z * 2.25f || z > height * 0.69f )
         {
-            // A single outward impulse carries the prop clear while retaining
-            // its tangential momentum. Gravity takes over the rest of the arc.
-            body.ApplyImpulse( (radial * (peak * 0.34f) + Vector3.Up * (peak * 0.04f)) * mass );
-            // The prop carries its cooldown, so all overlapping storms honor
-            // the same release, even if this tornado is removed mid-flight.
+            // Leave with the velocity the wind has built up, not a release kick.
+            // Overlapping storms honor the same short ballistic lockout.
             obj.Tags.Add( OrbitReleaseTag );
             obj.Tags.Add( OrbitReleasePrefix + (int)now );
             DropOrbit( obj );
@@ -366,22 +399,39 @@ public sealed class StormDisasterFunnel : Component
             orbitClaims.Add( obj );
         }
         orbitTouched.Add( obj );
-        propOrbits[obj] = new Vector4( angle, swept, track.z, track.w );
-        float sideSpeed = MathF.Min( peak * 0.59f, track.z * 3.15f );
+        propOrbits[obj] = track;
+        // Coherent rotating lobes: nearby props meet the same rising and sinking
+        // air, but enter at different phases and respond differently to drag.
+        float lobe = angle * 2f + z * 0.0022f - (now - formedAt) * 1.65f + routePhase;
+        float surge = MathF.Sin( lobe );
+        float ripple = MathF.Sin( lobe * 2f + 1.7f );
+        float ringRadius = track.z * (1f + 0.17f * surge + 0.065f * ripple);
+        float sideSpeed = MathF.Min( peak * (0.53f + 0.095f * surge), track.z * (2.85f + 0.48f * ripple) );
         float along = Vector3.Dot( velocity, tangent );
         float across = Vector3.Dot( velocity, radial );
         float centripetal = MathF.Min( along * along / MathF.Max( distance, 48f ), 12000f );
-        float radialAccel = Math.Clamp( (track.z - distance) * 12f - across * 6f - centripetal, -16000f, 7000f );
-        // The ring supplies the inward turn, but it must not make dense props
-        // spin up as fast as light props with the same exposed surface area.
+        float hold = Math.Clamp( (ringRadius - distance) * 8f - across * 4.4f - centripetal, -13500f, 5100f );
+        float exitWindow = MathF.Min( track.w * 0.73f, 0.82f + 0.42f * track.y );
+        float breakaway = Fade( (elapsed - (track.w - exitWindow)) / exitWindow );
+        // A weak lobe lets debris peel off and drop; a stronger one sweeps it
+        // outward over several wind pulses while its sideways momentum remains.
+        float ejection = Fade( (track.y - 0.21f) / 0.58f );
+        float outwardSpeed = peak * ejection * (0.23f + 0.070f * surge);
+        float outwardAccel = Math.Clamp( (outwardSpeed - across) * 2.65f, -900f, 2600f );
+        float radialAccel = Mix( hold, outwardAccel, breakaway * ejection );
         const float metersPerUnit = 0.0254f;
         float sideArea = ProjectedArea( dimensions * metersPerUnit, rotation.Inverse * tangent );
         float windMeters = wind.WithZ( 0f ).Length * metersPerUnit;
         float spinAuthority = Math.Clamp( 1.35f * sideArea * windMeters * windMeters / (mass * metersPerUnit), 220f, 8500f );
-        float tangentAccel = Math.Clamp( (sideSpeed - along) * 5f, -spinAuthority, spinAuthority );
-        float climb = Math.Clamp( (track.w + 240f - z) * 1.65f, 0f, 405f + 40f * rating );
+        float spinUp = Math.Clamp( (sideSpeed - along) * 4f, -spinAuthority, spinAuthority );
+        float slackAirDrag = Math.Clamp( -along * 1.45f, -spinAuthority, spinAuthority );
+        float tangentAccel = Mix( spinUp, slackAirDrag * (1f - ejection), breakaway );
+        float climb = (135f + 50f * rating) * (0.60f + 0.65f * track.y) + 310f * surge + 115f * ripple;
+        climb *= 1f - Fade( (z / height - 0.46f) / 0.23f );
         float gravity = body.Gravity ? -Scene.PhysicsWorld.Gravity.z * body.GravityScale : 0f;
-        float upAccel = Math.Clamp( (climb - velocity.z) * 5f + gravity, -7500f, 7500f );
+        float liftAuthority = Math.Clamp( 1.4f * spinAuthority, 420f, 6800f );
+        float upAccel = Math.Clamp( (climb - velocity.z) * 3.9f + gravity, -4800f, liftAuthority );
+        upAccel *= 1f - breakaway * (1f - 0.32f * ejection);
         body.ApplyImpulse( (radial * radialAccel + tangent * tangentAccel + Vector3.Up * upAccel) * (mass * dt) );
         return true;
     }

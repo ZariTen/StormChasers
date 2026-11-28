@@ -61,6 +61,7 @@ PS
 	float VortexWedge < Attribute( "VortexWedge" ); >; // weighted transition to the hollow F5
 	float4 VortexRadii < Attribute( "VortexRadii" ); >;
 	float4 VortexPhase < Attribute( "VortexPhase" ); >; // top radius, visible floor, opacity, animation time
+	float4 VortexDustProfile < Attribute( "VortexDustProfile" ); >; // lift, radial spread, density, turbulence
 	float4 VortexAxisX < Attribute( "VortexAxisX" ); >;
 	float4 VortexAxisY < Attribute( "VortexAxisY" ); >;
 	float2 VortexTop < Attribute( "VortexTop" ); >;
@@ -108,7 +109,11 @@ PS
 		float2 center = float2( Curve( VortexAxisX, VortexTop.x, h ), Curve( VortexAxisY, VortexTop.y, h ) );
 		float2 crossSection = (p.xy - center) / max( radius, 10 );
 		float radial = length( crossSection );
-		if ( radial > lerp( 1.39, 1.20, VortexWedge ) ) return 0;
+		float dustH = p.z / max( 1, VortexDustProfile.x );
+		float dustMix = VortexDustProfile.x > 0 ? 1 - smoothstep( .16, 1, dustH ) : 0;
+		float dustRadius = radius + VortexDustProfile.y * lerp( 1.10, .66, saturate( dustH ) );
+		float dustR = length( p.xy - center ) / max( 1, dustRadius );
+		if ( radial > lerp( 1.39, 1.20, VortexWedge ) && (dustMix <= 0 || dustR > 1.24) ) return 0;
 		// Rotate continuously, but keep the twist between heights bounded. A persistent
 	// difference in spin rate would wind a multi-minute funnel into tight stripes.
 	float twist = 3.7 + 1.25 * sin( VortexPhase.w * .29 + .8 );
@@ -126,10 +131,33 @@ PS
 		// A broken veil softens the core without adding another layer of billboard smoke.
 		float veil = (1 - VortexWedge) * (1 - smoothstep( .86, 1.36, radial )) * smoothstep( .35, .74, coarse.r * .7 + detail.g * .3 ) * .35;
 		float density = max( outer, veil ) * inner * edge * (.77 + .70 * ridge) * VortexPhase.z;
+		// Give the add-on a dense condensation core without hardening the silhouette.
+		// The inner mask still keeps the walk-in wedge's eye hollow.
+		if ( VortexDustProfile.x > 0 )
+		{
+			float core = 1 - smoothstep( .54, .91, radial );
+			density *= 1 + core * lerp( 1.10, 2.15, VortexDustProfile.w );
+		}
 		float sideLight = smoothstep( -.85, 1.0, dot( crossSection, float2( -.65, .76 ) ) );
 		float silver = smoothstep( .64, 1, radial ) * sideLight;
 		float3 color = lerp( float3( .023, .029, .037 ), float3( .153, .167, .185 ), saturate( .12 + .48*sideLight + .35*ridge + .14*silver ) );
-		return float4( color, density * 4.4 / max( 52, radius ) );
+		float body = density * 4.4 / max( 52, radius ) * (1 - dustMix);
+		if ( dustMix <= 0 || dustR > 1.24 ) return float4( color, body );
+		// Mix the spinning dust into the same volume so condensation cannot draw over it.
+		float turbulence = VortexDustProfile.w;
+		float2 dustLocal = spun * (radius / max( 1, dustRadius ));
+		float3 dirt = VortexNoise.SampleLevel( VortexSampler, float3( dustLocal * .58 + .5, dustH * .57 - VortexPhase.w * .19 ), 0 ).rgb;
+		float3 wisps = VortexNoise.SampleLevel( VortexSampler, float3( (dustLocal + (dirt.gb - .5) * .23) * 2.16 + .47, dustH * 1.1 - VortexPhase.w * .41 ), 0 ).rgb;
+		float roll = .5 + .5 * sin( 4 * atan2( dustLocal.y, dustLocal.x + .0001 ) + 10 * dustH - VortexPhase.w * 2.9 + dirt.g * 4 );
+		float billow = lerp( .66 * dirt.r + .34 * dirt.g, .38 * dirt.r + .35 * wisps.r + .27 * roll, turbulence );
+		float folds = lerp( .34 + 1.12 * billow, .12 + 1.85 * smoothstep( .31, .68, billow ), turbulence );
+		float envelope = 1 - smoothstep( .38, 1.04, dustR + lerp( .38, .70, turbulence ) * (.52 - billow) );
+		float eye = lerp( 1, smoothstep( VortexBounds.w, VortexBounds.w + radius * .25, dustR * dustRadius ), VortexWedge );
+		float ground = smoothstep( -.035, .14, dustH + .13 * (billow - .5) );
+		float dust = VortexDustProfile.z * dustMix * ground * envelope * eye * folds * VortexPhase.z / max( 120, dustRadius );
+		float grit = lerp( billow, smoothstep( .31, .76, .67 * billow + .33 * wisps.g ), turbulence );
+		float3 dustColor = lerp( float3( .057, .047, .037 ), float3( .275, .232, .179 ), grit );
+		return float4( (body * color + dust * dustColor) / max( .000001, body + dust ), body + dust );
 	}
 
 	// Density per world unit and local scattering color.
@@ -180,13 +208,29 @@ PS
 		bool hasCloud = cap.y > cap.x && StormCloudBounds.w >= .004;
 		if ( !hasFunnel && !hasCloud ) discard;
 		float march = min( hasFunnel ? funnel.x : farDist, hasCloud ? cap.x : farDist );
-		float funnelStride = (funnel.y - funnel.x) / (abs( ray.z ) > .48 ? 48 : 32);
+		bool hasDust = VortexDustProfile.x > 0;
+		float funnelStride = (funnel.y - funnel.x) / (hasDust ? 52 + 12 * abs( ray.z ) : (abs( ray.z ) > .48 ? 48 : 32));
 		float capStride = (cap.y - cap.x) / 28;
+		// Gradually spend more samples near the ground and central column. A hard
+		// step-size or jitter switch across a height plane draws a seam in the funnel.
+		float detailHeight = VortexDustProfile.x * 2.2;
+		float detailH = saturate( detailHeight / max( 1, VortexBounds.z ) );
+		float detailRadius = max( VortexRadii.x, max( VortexRadii.y, Curve( VortexRadii, VortexPhase.x, detailH ) ) );
+		float2 lowerBend = max( abs( VortexAxisX.yz ), abs( VortexAxisY.yz ) );
+		float detailExtent = min( VortexBounds.x, 1.8 * detailRadius + max( lowerBend.x, lowerBend.y ) + VortexDustProfile.y * 1.5 );
+		float fineStride = min( funnelStride, lerp( 27, 18, VortexDustProfile.w ) );
+		const int stepBudget = 192;
+		// Bound the number of full steps even on a long, translucent wedge ray.
+		// Reserve iterations for partial steps at interval boundaries and empty-space jumps.
+		float marchEnd = max( hasFunnel ? funnel.y : march, hasCloud ? cap.y : march );
+		float minimumStride = hasDust ? max( .25, (marchEnd - march) / (stepBudget - 8) ) : .25;
+		float dither = frac( 52.9829189 * frac( dot( floor( i.vPositionSs.xy ), float2( .06711056, .00583715 ) ) ) );
+		float sampleFraction = hasDust ? lerp( .25, .75, dither ) : .5;
 		float transmittance = 1;
 		float3 scattered = 0;
 		float weightedDepth = 0;
 		// March both fields in distance order, skipping gaps between the bounding boxes.
-		[loop] for ( int stepIndex = 0; stepIndex < 82; ++stepIndex )
+		[loop] for ( int stepIndex = 0; stepIndex < stepBudget; ++stepIndex )
 		{
 			bool inFunnel = hasFunnel && march >= funnel.x && march < funnel.y;
 			bool inCloud = hasCloud && march >= cap.x && march < cap.y;
@@ -199,10 +243,21 @@ PS
 				march = next;
 				continue;
 			}
-			if ( inFunnel ) next = min( next, min( funnel.y, march + max( .25, funnelStride ) ) );
-			if ( inCloud ) next = min( next, min( cap.y, march + max( .25, capStride ) ) );
+			if ( inFunnel )
+			{
+				float stride = funnelStride;
+				if ( hasDust )
+				{
+					float3 stepCenter = origin + ray * (march + .5 * funnelStride);
+					float vertical = 1 - smoothstep( .35, 1, stepCenter.z / max( 1, detailHeight ) );
+					float lateral = 1 - smoothstep( .62, 1, length( stepCenter.xy ) / max( 1, detailExtent ) );
+					stride = lerp( funnelStride, fineStride, vertical * lateral );
+				}
+				next = min( next, min( funnel.y, march + max( minimumStride, stride ) ) );
+			}
+			if ( inCloud ) next = min( next, min( cap.y, march + max( minimumStride, capStride ) ) );
 			float stepSize = next - march;
-			float dist = march + stepSize * .5;
+			float dist = march + stepSize * sampleFraction;
 			march = next;
 			float3 p = origin + ray * dist;
 			float4 cloud = inCloud ? SampleWallCloud( p ) : 0;
@@ -214,7 +269,8 @@ PS
 			scattered += weight * (cloud.rgb * cloud.a + body.rgb * body.a) / density;
 			weightedDepth += weight * dist;
 			transmittance *= 1 - absorb;
-			if ( transmittance < .015 ) break;
+			// The previous cutoff left visible background contrast through a dense core.
+			if ( transmittance < (hasDust ? .002 : .015) ) break;
 		}
 		float opacity = 1 - transmittance;
 		if ( opacity < .005 ) discard;

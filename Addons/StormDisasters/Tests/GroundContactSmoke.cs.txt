@@ -1,0 +1,54 @@
+// Run during stock Flatgrass Play. Does not use the player's spawn or undo stack.
+var scene = Game.ActiveScene;
+if (!scene.GetAllComponents<MapInstance>().Any(m => m.MapName == "facepunch.flatgrass"))
+    throw new Exception("Expected stock Flatgrass.");
+
+var start = new Vector3(-1400, 1800, 16);
+var floor = scene.Trace.Ray(start + Vector3.Up * 100f, start - Vector3.Up * 100f).WithoutTags("player", "trigger").Run();
+if (!floor.Hit || floor.Normal.z < 0.65f) throw new Exception("No floor at the Flatgrass test location.");
+
+var failures = new System.Collections.Generic.List<string>();
+var results = new System.Collections.Generic.List<object>();
+foreach (var (kind, altitude) in new[] { ("funnel", 0f), ("wedge", 320f) })
+{
+    var prefab = GameObject.GetPrefab($"storm_disasters/{kind}_tornado.prefab");
+    var tornado = prefab.Clone(floor.HitPosition + Vector3.Up * altitude);
+    tornado.NetworkMode = NetworkMode.Never;
+    try
+    {
+        ModelRenderer volume = null;
+        for (var i = 0; i < 20 && !volume.IsValid() && tornado.IsValid(); i++)
+        {
+            await Task.Delay(50, cancellationToken);
+            volume = tornado.Children.SingleOrDefault(o => o.Name == "Condensation Volume")?.GetComponent<ModelRenderer>();
+        }
+        if (!volume.IsValid()) throw new Exception($"{kind}: no shader-backed tornado after spawn.");
+        await Task.Delay(100, cancellationToken);
+        var first = tornado.WorldPosition;
+        // The shader's lower edge starts fading at floor - .01 and reaches full opacity at floor + .115.
+        var phase = volume.Attributes.GetVector4("VortexPhase", default);
+        if (phase.z <= 0f || phase.y > -0.115f)
+            failures.Add($"{kind}: forming condensation is disconnected, phase={phase}.");
+        if (MathF.Abs(first.z - floor.HitPosition.z) > 2f)
+            failures.Add($"{kind}: spawned {first.z - floor.HitPosition.z:F1} units off the floor.");
+        await Task.Delay(600, cancellationToken);
+        var current = tornado.WorldPosition;
+        var support = scene.Trace.Ray(current + Vector3.Up * 480f, current - Vector3.Up * 480f).WithoutTags("player", "trigger").Run();
+        var travel = (current - first).WithZ(0).Length;
+        if (!support.Hit || MathF.Abs(current.z - support.HitPosition.z) > 2f || travel < 15f)
+            failures.Add($"{kind}: did not travel on the ground (travel={travel:F1}, floor gap={current.z - support.HitPosition.z:F1}).");
+        results.Add(new { kind, altitude, travel, FloorGap = current.z - support.HitPosition.z, VisibleFloor = phase.y });
+    }
+    finally { if (tornado.IsValid()) tornado.Destroy(); }
+}
+var unsupportedPrefab = GameObject.GetPrefab("storm_disasters/funnel_tornado.prefab");
+var unsupported = unsupportedPrefab.Clone(floor.HitPosition - Vector3.Up * 20000f);
+unsupported.NetworkMode = NetworkMode.Never;
+try
+{
+    await Task.Delay(180, cancellationToken);
+    if (unsupported.IsValid()) failures.Add("A spawn with no ground below it survived.");
+}
+finally { if (unsupported.IsValid()) unsupported.Destroy(); }
+if (failures.Count > 0) throw new Exception(string.Join(" ", failures));
+return results;

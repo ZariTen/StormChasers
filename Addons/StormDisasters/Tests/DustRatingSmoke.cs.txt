@@ -1,0 +1,32 @@
+// Verify rating-specific dust independently of tornado dimensions in stock Sandbox Play.
+var p = new Vector3(-1400f, 1800f, 16f);
+var results = new System.Collections.Generic.List<(int Rating, Vector4 Dust)>();
+foreach (int rating in new[] { 0, 1, 2, 3, 4, 5 })
+{
+    var suffix = rating == 2 ? "" : $"_f{rating}";
+    var tornado = GameObject.GetPrefab($"storm_disasters/funnel_tornado{suffix}.prefab").Clone(p);
+    tornado.NetworkMode = NetworkMode.Never;
+    try
+    {
+        ModelRenderer volume = null;
+        for (int i = 0; i < 30 && !volume.IsValid(); i++)
+        {
+            await Task.Delay(50, cancellationToken);
+            volume = tornado.Children.FirstOrDefault(o => o.Name == "Condensation Volume")?.GetComponent<ModelRenderer>();
+        }
+        if (!volume.IsValid()) throw new Exception($"F{rating}: no volume.");
+        results.Add((rating, volume.Attributes.GetVector4("VortexDustProfile", default)));
+    }
+    finally { if (tornado.IsValid()) tornado.Destroy(); }
+}
+var f0 = results[0].Dust;
+var f3 = results[3].Dust;
+if (f0.x <= 0 || f3.x < 2 * f0.x || f3.z < 1.45f * f0.z || f3.w - f0.w < .4f)
+    throw new Exception($"F3 should have taller, denser, more sharply broken dust, not just a larger funnel. F0: {f0}, F3: {f3}.");
+for (int i = 1; i < results.Count; i++)
+{
+    var a = results[i - 1].Dust;
+    var b = results[i].Dust;
+    if (b.x <= a.x || b.z <= a.z || b.w <= a.w) throw new Exception($"F{i}: dust did not intensify independently of the funnel size.");
+}
+return results.Select(x => new { x.Rating, Height = x.Dust.x, Spread = x.Dust.y, Density = x.Dust.z, Definition = x.Dust.w }).ToArray();

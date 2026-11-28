@@ -1,0 +1,82 @@
+// Render the same F3 frame against bright and dark opaque backdrops and measure background leakage.
+var p = new Vector3(-1400f, 1800f, 16f);
+var tornado = GameObject.GetPrefab("storm_disasters/funnel_tornado_f3.prefab").Clone(p);
+tornado.NetworkMode = NetworkMode.Never;
+var cameraObject = new GameObject(true, "Tornado opacity verification camera");
+var panelObject = new GameObject(true, "Tornado opacity test backdrop");
+var frozenObject = new GameObject(true, "Frozen tornado shader probe");
+foreach (var obj in new[] { cameraObject, panelObject, frozenObject }) obj.NetworkMode = NetworkMode.Never;
+try
+{
+    var camera = cameraObject.AddComponent<CameraComponent>();
+    camera.IsMainCamera = false;
+    camera.RenderExcludeTags.Add("player");
+    camera.RenderExcludeTags.Add("viewmodel");
+    camera.FieldOfView = 54f;
+    camera.ZFar = 14000f;
+    ModelRenderer source = null;
+    for (int i = 0; i < 95; i++)
+    {
+        await Task.Delay(40, cancellationToken);
+        if (!tornado.IsValid()) throw new Exception("Source tornado lost ground.");
+        source = tornado.Children.FirstOrDefault(o => o.Name == "Condensation Volume")?.GetComponent<ModelRenderer>();
+        if (source.IsValid() && source.Attributes.GetVector4("VortexPhase", default).w >= 2.5f) break;
+    }
+    if (!source.IsValid()) throw new Exception("No shader-backed condensation volume.");
+    var root = tornado.WorldPosition;
+    frozenObject.WorldTransform = source.GameObject.WorldTransform;
+    var frozen = frozenObject.AddComponent<ModelRenderer>();
+    frozen.Model = source.Model;
+    frozen.MaterialOverride = source.MaterialOverride;
+    frozen.RenderType = ModelRenderer.ShadowRenderType.Off;
+    foreach (var key in new[] { "VortexBounds", "VortexPhase", "VortexRadii", "VortexAxisX", "VortexAxisY", "StormCloudBounds", "VortexDustProfile" })
+        frozen.Attributes.Set(key, source.Attributes.GetVector4(key, default));
+    foreach (var key in new[] { "VortexForward", "VortexTop" })
+    {
+        var value = source.Attributes.GetVector4(key, default);
+        frozen.Attributes.Set(key, new Vector2(value.x, value.y));
+    }
+    foreach (var key in new[] { "VortexOrigin", "StormCloudCenter" })
+    {
+        var value = source.Attributes.GetVector4(key, default);
+        frozen.Attributes.Set(key, new Vector3(value.x, value.y, value.z));
+    }
+    frozen.Attributes.Set("VortexWedge", source.Attributes.GetFloat("VortexWedge", 0f));
+    frozen.Attributes.Set("VortexNoise", source.Attributes.GetTexture("VortexNoise", default));
+    tornado.Destroy();
+
+    var panel = panelObject.AddComponent<ModelRenderer>();
+    panel.Model = Model.Load("models/dev/box.vmdl");
+    panel.MaterialOverride = Material.Load("materials/dev/primary_white.vmat");
+    panel.RenderType = ModelRenderer.ShadowRenderType.Off;
+    panelObject.WorldPosition = root + new Vector3(1100, 0, 1410);
+    panelObject.WorldScale = new Vector3(0.5f, 100f, 70f);
+    cameraObject.WorldPosition = root + new Vector3(-1350, 0, 1100);
+    cameraObject.WorldRotation = Rotation.LookAt((root + Vector3.Up * 1100f - cameraObject.WorldPosition).Normal);
+
+    async Task<Color[]> Capture(Color tint, bool renderTornado)
+    {
+        panel.Tint = tint;
+        frozen.Enabled = renderTornado;
+        await Task.Delay(80, cancellationToken);
+        using var bitmap = new Bitmap(512, 288);
+        camera.RenderToBitmap(bitmap, false);
+        // Three heights through the main body; sample a small central patch at each.
+        return new[] { 76, 112, 156 }.SelectMany(y => Enumerable.Range(246, 21).Select(x => bitmap.GetPixel(x, y))).ToArray();
+    }
+    var clearWhite = await Capture(Color.White, false);
+    var clearBlack = await Capture(Color.Black, false);
+    var bodyWhite = await Capture(Color.White, true);
+    var bodyBlack = await Capture(Color.Black, true);
+    float Luma(Color c) => .2126f * c.r + .7152f * c.g + .0722f * c.b;
+    var clear = clearWhite.Zip(clearBlack, (a, b) => MathF.Abs(Luma(a) - Luma(b))).Average();
+    if (clear < .25f) throw new Exception($"Opacity probe could not see its opaque background (contrast {clear:F3}).");
+    var leaks = bodyWhite.Zip(bodyBlack, (a, b) => MathF.Abs(Luma(a) - Luma(b)) / clear).ToArray();
+    var leakage = leaks.Max();
+    if (leakage > .012f) throw new Exception($"F3 core still shows {leakage:P1} of background contrast (mean {leaks.Average():P1}).");
+    return new { BackgroundContrast = clear, PeakCoreLeakage = leakage, AverageCoreLeakage = leaks.Average() };
+}
+finally
+{
+    foreach (var obj in new[] { tornado, cameraObject, panelObject, frozenObject }) if (obj.IsValid()) obj.Destroy();
+}

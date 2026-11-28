@@ -17,6 +17,13 @@ function adaptGroundEffects(source) {
   if(!dustCount||!debrisCount||!angle) throw new Error('Could not read standalone ground-effect counts or angle.');
   let dust=method('AnimateGround');
   for(const [from,to] of [['dust.Length','DustCount'],['dust[i]','puffs[FallbackCount + i]'],['renderer.LocalPosition =','renderer.WorldPosition = WorldPosition +']]) dust=swap(dust,from,to);
+  // Retain the shared sweeping skirt; replace its inner puffs with the add-on's base wrap.
+  dust=swap(dust,'            var skirt = i % 3 != 0;',`            var skirt = i % 3 != 0;
+            if ( !skirt )
+            {
+                UpdateDustShroud( renderer, i, v, t, height, groundScale, radii, top, rope, circulation );
+                continue;
+            }`);
   let debris=method('AnimateDebris');
   for(const [from,to] of [
     ['        var sections = StormFunnelSections.For( BaseSilhouette );\n',''],['        var funnelWidth = profile.WidthScale * (1 - .29f * rope);\n',''],
@@ -36,7 +43,7 @@ function adaptGroundEffects(source) {
     '    float[] surfaceSeeds = new float[]', '    {', ...chunks, '    };',
     '    float SurfaceSeed( int i ) => surfaceSeeds[i];',
     '    Vector3 Orbit( float angle, float radius, float aspect ) => new Vector3( MathF.Cos( angle ) * radius, MathF.Sin( angle ) * radius * aspect, 0f );',
-    '    void UpdateDust( float t, float groundScale, float wedge, float wedgeScale, float circulation )', '    {'+dust, '    }',
+    '    void UpdateDust( float t, float height, float groundScale, float wedge, float wedgeScale, Vector4 radii, float top, float rope, float circulation )', '    {'+dust, '    }',
     '    void UpdateDebris( float t, float height, Vector4 radii, float top, float groundScale, float rope, float circulation, float progress )', '    {'+debris, '    }',
   ].join('\n');
 }

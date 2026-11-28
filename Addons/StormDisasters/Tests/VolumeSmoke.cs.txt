@@ -26,8 +26,8 @@ foreach (var (kind, suffix, minHeight) in new[] { ("rope", "", 3480f), ("funnel"
         if (firstPhase.x <= 0f) throw new Exception($"{kind}: shader parameters did not initialize.");
         var firstCloud = volume.Attributes.GetVector4("StormCloudBounds", default);
         var dust = tornado.Children.Single(o => o.Name == "Tornado smoke").Children.Select(o => o.GetComponent<SpriteRenderer>()).ToArray();
-        if (dust.Length != 36 || dust.Any(x => !x.IsValid() || x.Size.x <= 0) || dust.Max(x => x.WorldPosition.z - tornado.WorldPosition.z) > 155)
-            throw new Exception($"{kind}: expected 36 soft ground-level dust sprites, got {dust.Length}.");
+        if (dust.Length != 36 || dust.Any(x => !x.IsValid() || x.Size.x <= 0) || dust.Count(x => x.WorldPosition.z - tornado.WorldPosition.z < 85f) < 12)
+            throw new Exception($"{kind}: expected 36 soft dust sprites including a ground-level skirt, got {dust.Length}.");
         if (dust.Select(x => x.Sprite).Distinct().Count() != 4)
             throw new Exception($"{kind}: expected the four standalone dust masks.");
         var debris = tornado.Children.FirstOrDefault(o => o.Name == "Airborne Debris");
@@ -43,8 +43,8 @@ foreach (var (kind, suffix, minHeight) in new[] { ("rope", "", 3480f), ("funnel"
         var proxyHeight = box.WorldScale.z * 50f;
         var phase = volume.Attributes.GetVector4("VortexPhase", default);
         var cloud = volume.Attributes.GetVector4("StormCloudBounds", default);
-        if (cloud.x < 2400f || cloud.z < 650f || cloud.w <= firstCloud.w || phase.y >= firstPhase.y || phase.z <= firstPhase.z)
-            throw new Exception($"{kind}: expected an animated lowering funnel and full-size forming wall cloud. Cloud {firstCloud} → {cloud}, phase {firstPhase} → {phase}.");
+        if (cloud.x < 2400f || cloud.z < 650f || cloud.w <= firstCloud.w || firstPhase.y > -0.115f || phase.y != firstPhase.y || phase.z <= firstPhase.z)
+            throw new Exception($"{kind}: expected ground-connected condensation and a full-size forming wall cloud. Cloud {firstCloud} → {cloud}, phase {firstPhase} → {phase}.");
         if (fragments[3].LocalPosition == before) throw new Exception($"{kind}: debris did not animate relative to the tornado.");
         results.Add((kind, proxyHeight, minHeight, phase.x, travel, dust.Length, fragments.Length));
     }
